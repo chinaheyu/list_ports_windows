@@ -4,7 +4,6 @@
 
 import ctypes
 import re
-from typing import Generator, Tuple, Union
 
 
 class GUID(ctypes.Structure):
@@ -1006,7 +1005,7 @@ def wake_up_device(port_device):
     CloseHandle(port_handle)
 
 
-def get_usb_info(port_device: DeviceInterface, all_hub_devices=None, sorted_usb_host_controllers=None) -> Union[USBInfo, None]:
+def get_usb_info(port_device: DeviceInterface, all_hub_devices=None, sorted_usb_host_controllers=None):
     # Enumerate and store the instance numbers of all connected usb hubs.
     if all_hub_devices is None:
         all_hub_devices = set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HUB))
@@ -1423,7 +1422,7 @@ def port_name_sorting_key(c):
     return split_text_number(c.port_name)
 
 
-def iterate_comports(retrieve_usb_info=False, unique=True) -> Generator[Union[Tuple[DeviceInterface, Union[USBInfo, None]], DeviceInterface], None, None]:
+def iterate_comports(retrieve_usb_info=False, unique=True):
     # Enumerate and store the instance numbers of all connected usb hubs.
     if retrieve_usb_info:
         all_hub_devices = set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HUB))
@@ -1453,7 +1452,7 @@ def iterate_comports(retrieve_usb_info=False, unique=True) -> Generator[Union[Tu
                 yield port_device
 
 
-def find_device_from_port_name(port_name: str) -> Union[DeviceInterface, None]:
+def find_device_from_port_name(port_name):
     # Finds the corresponding device node from the com port name (COMx).
     for port_device in iterate_comports():
         if port_device.port_name == port_name:
