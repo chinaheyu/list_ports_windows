@@ -98,6 +98,20 @@ class USB_INTERFACE_DESCRIPTOR(ctypes.Structure):
     ]
 
 
+class USB_INTERFACE_ASSOCIATION_DESCRIPTOR(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ('bLength', ctypes.c_uint8),
+        ('bDescriptorType', ctypes.c_uint8),
+        ('bFirstInterface', ctypes.c_uint8),
+        ('bInterfaceCount', ctypes.c_uint8),
+        ('bFunctionClass', ctypes.c_uint8),
+        ('bFunctionSubClass', ctypes.c_uint8),
+        ('bFunctionProtocol', ctypes.c_uint8),
+        ('iFunction', ctypes.c_uint8)
+    ]
+
+
 class USB_NODE_CONNECTION_INFORMATION_EX(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
@@ -404,6 +418,7 @@ USB_DEVICE_DESCRIPTOR_TYPE = 1
 USB_CONFIGURATION_DESCRIPTOR_TYPE = 2
 USB_STRING_DESCRIPTOR_TYPE = 3
 USB_INTERFACE_DESCRIPTOR_TYPE = 4
+USB_INTERFACE_ASSOCIATION_DESCRIPTOR_TYPE = 0x0B
 IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION = 2229264
 IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX = 2229320
 IOCTL_USB_GET_ROOT_HUB_NAME = 2229256
@@ -613,6 +628,8 @@ def request_usb_interface_descriptions(h_hub_device, usb_hub_port, configuration
 
     # https://github.com/microsoft/Windows-driver-samples/blob/main/usb/usbview/enum.c#L2413
     common_description_offset = 0
+    target_interface_association_description = None
+    target_interface_description = None
     while True:
         if common_description_offset + ctypes.sizeof(USB_COMMON_DESCRIPTOR) < configuration_description.wTotalLength:
             common_description = ctypes.cast(
@@ -620,6 +637,20 @@ def request_usb_interface_descriptions(h_hub_device, usb_hub_port, configuration
                 ctypes.POINTER(USB_COMMON_DESCRIPTOR)
             )
             if common_description_offset + common_description.contents.bLength <= configuration_description.wTotalLength:
+                if common_description.contents.bDescriptorType == USB_INTERFACE_ASSOCIATION_DESCRIPTOR_TYPE:
+                    if common_description.contents.bLength == ctypes.sizeof(USB_INTERFACE_ASSOCIATION_DESCRIPTOR):
+                        interface_association_description = ctypes.cast(
+                            ctypes.byref(configuration_description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset),
+                            ctypes.POINTER(USB_INTERFACE_ASSOCIATION_DESCRIPTOR)
+                        )
+                        if interface_association_description.contents.bFirstInterface <= bInterfaceNumber <= interface_association_description.contents.bFirstInterface + interface_association_description.contents.bInterfaceCount - 1:
+                            target_interface_association_description = USB_INTERFACE_ASSOCIATION_DESCRIPTOR.from_buffer_copy(
+                                configuration_description_request_buffer,
+                                ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
+                            )
+                    else:
+                        break
+
                 if common_description.contents.bDescriptorType == USB_INTERFACE_DESCRIPTOR_TYPE:
                     if common_description.contents.bLength == ctypes.sizeof(USB_INTERFACE_DESCRIPTOR):
                         interface_description = ctypes.cast(
@@ -627,18 +658,24 @@ def request_usb_interface_descriptions(h_hub_device, usb_hub_port, configuration
                             ctypes.POINTER(USB_INTERFACE_DESCRIPTOR)
                         )
                         if interface_description.contents.bInterfaceNumber == bInterfaceNumber and interface_description.contents.bAlternateSetting == bAlternateSetting:
-                            return USB_INTERFACE_DESCRIPTOR.from_buffer_copy(
+                            target_interface_description = USB_INTERFACE_DESCRIPTOR.from_buffer_copy(
                                 configuration_description_request_buffer,
                                 ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
                             )
                     else:
                         break
+
+                # interface association description precedes interface description
+                # https://www.usb.org/sites/default/files/iadclasscode_r10.pdf figure 2-1
+                if target_interface_description is not None:
+                    break
+
                 common_description_offset += common_description.contents.bLength
             else:
                 break
         else:
             break
-    return None
+    return target_interface_association_description, target_interface_description
 
 
 def request_usb_connection_info(h_hub_device, usb_hub_port):
@@ -939,17 +976,18 @@ class DeviceInterface(DeviceNode):
 
 
 class USBInfo:
-    def __init__(self, pid, vid, product, manufacturer, serial_number, location, interface):
+    def __init__(self, pid, vid, product, manufacturer, serial_number, location, function, interface):
         self.pid = pid
         self.vid = vid
         self.product = product
         self.manufacturer = manufacturer
         self.serial_number = serial_number
         self.location = location
+        self.function = function
         self.interface = interface
 
     def __str__(self):
-        return f'{self.location} - {self.vid:04X}:{self.pid:04X} - {self.product} - {self.manufacturer} - {self.serial_number} - {self.interface}'
+        return f'{self.location} - {self.vid:04X}:{self.pid:04X} - {self.product} - {self.manufacturer} - {self.serial_number} - {self.function} - {self.interface}'
 
 
 def wake_up_device(port_device):
@@ -1058,6 +1096,7 @@ def get_usb_info(port_device: DeviceInterface, all_hub_devices=None, sorted_usb_
         bInterfaceNumber = parse_interface_number(port_device.instance_identifier)
 
     # Read interface description.
+    function = None
     interface = None
     if bConfigurationValue is not None:
         configuration_description = request_usb_configuration_description(h_hub_device, usb_hub_port, bConfigurationValue)
@@ -1068,7 +1107,9 @@ def get_usb_info(port_device: DeviceInterface, all_hub_devices=None, sorted_usb_
             # Get interface string of bInterfaceNumber.
             # There is only one alternative interface in most cases (bAlternateSetting == 0).
             # If we don't know bAlternateSetting, then use the default interface.
-            interface_description = request_usb_interface_descriptions(h_hub_device, usb_hub_port, configuration_description, bInterfaceNumber, 0)
+            interface_association_description, interface_description = request_usb_interface_descriptions(h_hub_device, usb_hub_port, configuration_description, bInterfaceNumber, 0)
+            if interface_association_description is not None:
+                function = request_usb_string_description(h_hub_device, usb_hub_port, interface_association_description.iFunction, language_id)
             if interface_description is not None:
                 interface = request_usb_string_description(h_hub_device, usb_hub_port, interface_description.iInterface, language_id)
 
@@ -1082,7 +1123,7 @@ def get_usb_info(port_device: DeviceInterface, all_hub_devices=None, sorted_usb_
 
     # Everything is fine! Finished and close the hub handle.
     CloseHandle(h_hub_device)
-    return USBInfo(pid, vid, product, manufacturer, serial_number, location, interface)
+    return USBInfo(pid, vid, product, manufacturer, serial_number, location, function, interface)
 
 
 def get_host_controller_information(c):
@@ -1132,19 +1173,22 @@ def host_controller_sorting_key(c, compat_linux=False):
         else:
             compare_list.append(float('inf'))
 
-    bus_number = c.bus_number
-    if bus_number is None:
-        compare_list.append(float('inf'))
-    else:
-        compare_list.append(bus_number)
+        bus_number = c.bus_number
+        if bus_number is None:
+            compare_list.append(float('inf'))
+        else:
+            compare_list.append(bus_number)
 
-    address = c.address
-    if address is None:
-        compare_list.extend([float('inf'), c.instance_handle])
+        address = c.address
+        if address is None:
+            compare_list.extend([float('inf'), c.instance_handle])
+        else:
+            device = c.address >> 16
+            function = c.address & 0xffff
+            compare_list.extend([device, function])
     else:
-        device = c.address >> 16
-        function = c.address & 0xffff
-        compare_list.extend([device, function])
+        compare_list.append(c.instance_handle)
+
     return compare_list
 
 
@@ -1467,6 +1511,7 @@ def test():
             print(f'Manufacturer: {usb_info.manufacturer}')
             print(f'Product: {usb_info.product}')
             print(f'SerialNumber: {usb_info.serial_number}')
+            print(f'Function: {usb_info.function}')
             print(f'Interface: {usb_info.interface}')
         print()
     print("If we've lost some serial ports or have incorrect information listed, please open an issue on github to let us know.")
