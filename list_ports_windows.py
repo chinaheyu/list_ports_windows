@@ -1008,9 +1008,9 @@ def wake_up_device(port_device):
 def get_usb_info(port_device: DeviceInterface, all_hub_devices=None, sorted_usb_host_controllers=None):
     # Enumerate and store the instance numbers of all connected usb hubs.
     if all_hub_devices is None:
-        all_hub_devices = set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HUB))
+        all_hub_devices = enumerate_usb_hub()
     if sorted_usb_host_controllers is None:
-        sorted_usb_host_controllers = sorted(set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HOST_CONTROLLER)), key=host_controller_sorting_key)
+        sorted_usb_host_controllers = enumerate_usb_host_controller()
 
     # Look up parent hub and usb recursively.
     hub_and_usb = find_parent_hub_and_usb(port_device, all_hub_devices)
@@ -1025,11 +1025,13 @@ def get_usb_info(port_device: DeviceInterface, all_hub_devices=None, sorted_usb_
             # The device is in sleep state. It needs to be woken up to D0 state to get the usb description.
             wake_up_device(port_device)
 
-    # Generate the hub path from PDO name and open it.
+    # Generate the hub path and open it.
     # Solution 1: https://stackoverflow.com/questions/28007468/how-do-i-obtain-usb-device-descriptor-given-a-device-path
     # hub_path = "\\\\?\\" + hub_device.instance_identifier.replace("\\", "#") + f"#{GUID_DEVINTERFACE_USB_HUB}"
     # Solution 2: https://stackoverflow.com/questions/21703592/open-device-name-using-createfile
-    hub_path = "\\\\?\\Global\\GLOBALROOT" + hub_device.physical_device_object_name
+    # hub_path = "\\\\?\\Global\\GLOBALROOT" + hub_device.physical_device_object_name
+    # Solution 3: Just using the interface string.
+    hub_path = hub_device.interface
     h_hub_device = CreateFileW(
         hub_path,
         GENERIC_WRITE,
@@ -1305,7 +1307,7 @@ def parse_location_string(location, sorted_usb_host_controllers=None):
     # http://www.linux-usb.org/FAQ.html#i6
     nodes = []
     if sorted_usb_host_controllers is None:
-        sorted_usb_host_controllers = sorted(set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HOST_CONTROLLER)), key=host_controller_sorting_key)
+        sorted_usb_host_controllers = enumerate_usb_host_controller()
     bus_num, port_chain = location.split('-')
     pci_device = sorted_usb_host_controllers[int(bus_num) - 1]
     m = re.match(r'PCI\\VEN_([0-9a-f]{4})&DEV_([0-9a-f]{4})&SUBSYS_[0-9a-f]{8}&REV_[0-9a-f]{2}', pci_device.instance_identifier, re.IGNORECASE)
@@ -1391,6 +1393,14 @@ def enumerate_device_interface(guid):
             yield DeviceInterface(interface)
 
 
+def enumerate_usb_hub():
+    return set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HUB))
+
+
+def enumerate_usb_host_controller():
+    return sorted(set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HOST_CONTROLLER)), key=host_controller_sorting_key)
+
+
 def find_parent_hub_and_usb(device_node, all_hub_devices):
     # Get parent hub device and usb device recursively.
     child_device = device_node
@@ -1398,8 +1408,9 @@ def find_parent_hub_and_usb(device_node, all_hub_devices):
         parent_device = child_device.parent
         if parent_device is None:
             return None
-        if parent_device in all_hub_devices:
-            return parent_device, child_device
+        target_parent_device = next((x for x in all_hub_devices if x == parent_device), None)
+        if target_parent_device is not None:
+            return target_parent_device, child_device
         child_device = parent_device
 
 
@@ -1425,8 +1436,8 @@ def port_name_sorting_key(c):
 def iterate_comports(retrieve_usb_info=False, unique=True):
     # Enumerate and store the instance numbers of all connected usb hubs.
     if retrieve_usb_info:
-        all_hub_devices = set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HUB))
-        sorted_usb_host_controllers = sorted(set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HOST_CONTROLLER)), key=host_controller_sorting_key)
+        all_hub_devices = enumerate_usb_hub()
+        sorted_usb_host_controllers = enumerate_usb_host_controller()
 
     # Generate non-repeating serial devices.
     if unique:
