@@ -783,15 +783,11 @@ class PortDevice(DeviceInterface):
     def sorting_key(self):
         return split_text_number(self.port_name)
 
-    def parse_interface_number_from_instance_identifier(self):
+    @staticmethod
+    def parse_interface_number_from_instance_identifier(instance_identifier):
         # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/standard-usb-identifiers
         # USB example: USB\VID_303A&PID_4001&MI_00\6&182C0AC9&0&0000
-        m = re.fullmatch(r'USB\\VID_[0-9a-f]{4}&PID_[0-9a-f]{4}&MI_(\d{2})\\.*?', self.instance_identifier, re.IGNORECASE)
-        if m is not None:
-            return int(m.group(1))
-        # https://github.com/pololu/libusbp/blob/master/src/windows/interface_windows.c#L222
-        # FTDIBUS example: FTDIBUS\VID_0403+PID_6001+B001ADZMA\0000
-        m = re.fullmatch(r'FTDIBUS\\.*\\([0-9a-f]*)', self.instance_identifier, re.IGNORECASE)
+        m = re.fullmatch(r'USB\\VID_[0-9a-f]{4}&PID_[0-9a-f]{4}&MI_(\d{2})\\.*?', instance_identifier, re.IGNORECASE)
         if m is not None:
             return int(m.group(1))
         return None
@@ -820,6 +816,7 @@ class PortDevice(DeviceInterface):
 
         # Get parent hub device and usb device recursively.
         usb_device = self
+        usb_interface_device = self
         while True:
             parent_device = usb_device.parent
             if parent_device is None:
@@ -827,6 +824,7 @@ class PortDevice(DeviceInterface):
             hub_device = find_from_iterable(all_hub_devices, parent_device)
             if hub_device is not None:
                 break
+            usb_interface_device = usb_device
             usb_device = parent_device
 
         # Get usb host controller.
@@ -906,7 +904,7 @@ class PortDevice(DeviceInterface):
                         break
             else:
                 # Try to parse interface number from hardware identifier string.
-                bInterfaceNumber = self.parse_interface_number_from_instance_identifier()
+                bInterfaceNumber = self.parse_interface_number_from_instance_identifier(usb_interface_device.instance_identifier)
 
             # Read interface description.
             function = None
@@ -959,8 +957,21 @@ class USBHostControllerDevice(DeviceInterface):
     @property
     def bus_number(self):
         if self not in self.usb_bus_list:
-            self.usb_bus_list.append(self)
+            self.update_bus_list()
         return self.usb_bus_list.index(self) + 1
+
+    @classmethod
+    def find_usb_host_controller(cls, bus_number):
+        bus_index = bus_number - 1
+        if bus_index >= len(cls.usb_bus_list):
+            cls.update_bus_list()
+        if bus_index < len(cls.usb_bus_list):
+            return cls.usb_bus_list[bus_index]
+        return None
+
+    @classmethod
+    def update_bus_list(cls):
+        cls.usb_bus_list = sorted(set(cls.enumerate_device()), key=lambda x: x.instance_identifier)
 
     def get_root_hub_name(self):
         hdev = CreateFileW(
@@ -1394,7 +1405,9 @@ def parse_location_string(location):
     # http://www.linux-usb.org/FAQ.html#i6
     nodes = []
     bus_num, port_chain = location.split('-')
-    pci_device = USBHostControllerDevice.usb_bus_list[int(bus_num) - 1]
+    pci_device = USBHostControllerDevice.find_usb_host_controller(int(bus_num))
+    if pci_device is None:
+        return nodes
     m = re.match(r'PCI\\VEN_([0-9a-f]{4})&DEV_([0-9a-f]{4})&SUBSYS_[0-9a-f]{8}&REV_[0-9a-f]{2}', pci_device.instance_identifier, re.IGNORECASE)
     if m is None:
         return nodes
