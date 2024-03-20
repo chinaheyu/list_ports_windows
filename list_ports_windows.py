@@ -811,12 +811,12 @@ class PortDevice(DeviceInterface):
             raise ctypes.WinError(ctypes.GetLastError())
         CloseHandle(port_handle)
 
-    def get_usb_info(self, all_hub_devices=None, sorted_usb_host_controllers=None):
+    def get_usb_info(self, all_hub_devices=None, all_usb_host_controllers=None):
         # Enumerate and store the instance numbers of all connected usb hubs.
         if all_hub_devices is None:
             all_hub_devices = set(USBHubDevice.enumerate_device())
-        if sorted_usb_host_controllers is None:
-            sorted_usb_host_controllers = sorted(USBHostControllerDevice.enumerate_device())
+        if all_usb_host_controllers is None:
+            all_usb_host_controllers = set(USBHostControllerDevice.enumerate_device())
 
         # Get parent hub device and usb device recursively.
         usb_device = self
@@ -832,7 +832,7 @@ class PortDevice(DeviceInterface):
         # Get usb host controller.
         parent_device = hub_device
         while parent_device is not None:
-            usb_host_controller_device = find_from_iterable(sorted_usb_host_controllers, parent_device)
+            usb_host_controller_device = find_from_iterable(all_usb_host_controllers, parent_device)
             if usb_host_controller_device is not None:
                 break
             parent_device = parent_device.parent
@@ -958,9 +958,9 @@ class USBHostControllerDevice(DeviceInterface):
 
     @property
     def bus_number(self):
-        if self.instance_identifier not in self.usb_bus_list:
-            self.usb_bus_list.append(self.instance_identifier)
-        return self.usb_bus_list.index(self.instance_identifier) + 1
+        if self not in self.usb_bus_list:
+            self.usb_bus_list.append(self)
+        return self.usb_bus_list.index(self) + 1
 
     def get_root_hub_name(self):
         hdev = CreateFileW(
@@ -1389,17 +1389,15 @@ def get_location_string(usb_device, usb_host_controller_device, bConfigurationVa
     return ''.join(location)
 
 
-def parse_location_string(location, sorted_usb_host_controllers=None):
+def parse_location_string(location):
     # Parses the location string and returns human-readable node names.
     # http://www.linux-usb.org/FAQ.html#i6
     nodes = []
-    if sorted_usb_host_controllers is None:
-        sorted_usb_host_controllers = sorted(set(USBHostControllerDevice.enumerate_device()))
     bus_num, port_chain = location.split('-')
-    pci_device = sorted_usb_host_controllers[int(bus_num) - 1]
+    pci_device = USBHostControllerDevice.usb_bus_list[int(bus_num) - 1]
     m = re.match(r'PCI\\VEN_([0-9a-f]{4})&DEV_([0-9a-f]{4})&SUBSYS_[0-9a-f]{8}&REV_[0-9a-f]{2}', pci_device.instance_identifier, re.IGNORECASE)
     if m is None:
-        return None
+        return nodes
     nodes.append(f'Bus {bus_num}: {pci_device.friendly_name}')
 
     hub_path = "\\\\.\\" + pci_device.get_root_hub_name()
@@ -1437,7 +1435,7 @@ def iterate_comports(retrieve_usb_info=False, unique=True):
     # Enumerate and store the instance numbers of all connected usb hubs.
     if retrieve_usb_info:
         all_hub_devices = set(USBHubDevice.enumerate_device())
-        sorted_usb_host_controllers = sorted(USBHostControllerDevice.enumerate_device())
+        all_usb_host_controllers = set(USBHostControllerDevice.enumerate_device())
 
     # Generate non-repeating serial devices.
     if unique:
@@ -1452,7 +1450,7 @@ def iterate_comports(retrieve_usb_info=False, unique=True):
                 yielded_devices.append(port_device)
         # Request usb information.
         if retrieve_usb_info:
-            usb_info = port_device.get_usb_info(all_hub_devices, sorted_usb_host_controllers)
+            usb_info = port_device.get_usb_info(all_hub_devices, all_usb_host_controllers)
             # usb_info may be None because some serial ports are not usb interfaces (e.g. virtual serial ports).
             yield port_device, usb_info
         else:
