@@ -194,13 +194,6 @@ class USB_CONTROLLER_INFO_0(ctypes.Structure):
     ]
 
 
-class USBUSER_CONTROLLER_INFO_0(ctypes.Structure):
-    _fields_ = [
-        ('Header', USBUSER_REQUEST_HEADER),
-        ('Info0', USB_CONTROLLER_INFO_0)
-    ]
-
-
 CreateFileW = ctypes.windll.kernel32.CreateFileW
 CreateFileW.argtypes = [
     ctypes.c_void_p,
@@ -422,14 +415,28 @@ IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION = 2229264
 IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX = 2229320
 IOCTL_USB_GET_ROOT_HUB_NAME = 2229256
 IOCTL_USB_GET_NODE_CONNECTION_NAME = 2229268
-IOCTL_USB_USER_REQUEST = 2229304
-USBUSER_GET_CONTROLLER_INFO_0 = 0x00000001
 
 GENERIC_READ = 2147483648
 GENERIC_WRITE = 1073741824
 OPEN_EXISTING = 3
 FILE_ATTRIBUTE_NORMAL = 128
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+
+def split_text_number(s):
+    result = []
+    for group in re.split(r'(\d+)', s):
+        if group:
+            try:
+                group = int(group)
+            except ValueError:
+                pass
+            result.append(group)
+    return result
+
+
+def find_from_iterable(iterable, value):
+    return next((x for x in iterable if x == value), None)
 
 
 def parse_device_property(buffer, buffer_size, property_type):
@@ -444,254 +451,6 @@ def parse_device_property(buffer, buffer_size, property_type):
     if property_type.value == DEVPROP_TYPE_BINARY:
         return buffer
     raise NotImplementedError(f'DEVPROPTYPE {property_type.value} is not implemented!')
-
-
-def request_supported_languages(h_hub_device, usb_hub_port):
-    # Filling setup package.
-    description_request_buffer = ctypes.create_string_buffer(
-        ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + ctypes.sizeof(USB_STRING_DESCRIPTOR)
-    )
-    description_request = ctypes.cast(description_request_buffer, ctypes.POINTER(USB_DESCRIPTOR_REQUEST))
-    description_request.contents.ConnectionIndex = usb_hub_port
-    description_request.contents.SetupPacket.wValue = USB_STRING_DESCRIPTOR_TYPE << 8
-    description_request.contents.SetupPacket.wIndex = 0
-    description_request.contents.SetupPacket.wLength = ctypes.sizeof(description_request_buffer) - ctypes.sizeof(USB_DESCRIPTOR_REQUEST)
-
-    # Send string description request.
-    if not DeviceIoControl(
-            h_hub_device,
-            IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
-            description_request_buffer,
-            ctypes.sizeof(description_request_buffer),
-            description_request_buffer,
-            ctypes.sizeof(description_request_buffer),
-            None,
-            None
-    ):
-        return None
-
-    # Parse string description from wstring buffer.
-    description = ctypes.cast(
-        ctypes.byref(description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST)),
-        ctypes.POINTER(USB_STRING_DESCRIPTOR)
-    )
-    languages = []
-    for i in range(2, description.contents.bLength, 2):
-        languages.append(ctypes.c_uint16.from_buffer(
-            description_request_buffer,
-            ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + i
-        ).value)
-    return languages
-
-
-def request_and_select_language_id(h_hub_device, usb_hub_port):
-    available_languages = request_supported_languages(h_hub_device, usb_hub_port)
-    if available_languages is None:
-        return 0x0409
-    default_language = GetUserDefaultLangID()
-    if default_language in available_languages:
-        return default_language
-    else:
-        return available_languages[0]
-
-
-def request_usb_string_description(h_hub_device, usb_hub_port, idx, langid=None):
-    if idx == 0:
-        # There is no string description at this index.
-        return None
-
-    # Get a list of supported languages from index 0, and match langid to system default language.
-    if langid is None:
-        langid = request_and_select_language_id(h_hub_device, usb_hub_port)
-
-    # Filling setup package.
-    description_request_buffer = ctypes.create_string_buffer(ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + ctypes.sizeof(USB_STRING_DESCRIPTOR))
-    description_request = ctypes.cast(description_request_buffer, ctypes.POINTER(USB_DESCRIPTOR_REQUEST))
-    description_request.contents.ConnectionIndex = usb_hub_port
-    description_request.contents.SetupPacket.wValue = (USB_STRING_DESCRIPTOR_TYPE << 8) | idx
-    description_request.contents.SetupPacket.wIndex = langid
-    description_request.contents.SetupPacket.wLength = ctypes.sizeof(description_request_buffer) - ctypes.sizeof(USB_DESCRIPTOR_REQUEST)
-
-    # Send string description request.
-    if not DeviceIoControl(
-            h_hub_device,
-            IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
-            description_request_buffer,
-            ctypes.sizeof(description_request_buffer),
-            description_request_buffer,
-            ctypes.sizeof(description_request_buffer),
-            None,
-            None
-    ):
-        return None
-
-    # Parse string description from wstring buffer.
-    description = ctypes.cast(ctypes.byref(description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST)),
-                              ctypes.POINTER(USB_STRING_DESCRIPTOR))
-    return ctypes.wstring_at(description.contents.bString, description.contents.bLength // 2 - 1)
-
-
-def request_usb_device_description(h_hub_device, usb_hub_port):
-    # Filling setup package for requesting device description.
-    device_description_request_buffer = ctypes.create_string_buffer(
-        ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + ctypes.sizeof(USB_DEVICE_DESCRIPTOR)
-    )
-    device_description_request = ctypes.cast(device_description_request_buffer, ctypes.POINTER(USB_DESCRIPTOR_REQUEST))
-    device_description_request.contents.ConnectionIndex = usb_hub_port
-    device_description_request.contents.SetupPacket.bmRequest = 0x80
-    device_description_request.contents.SetupPacket.bRequest = USB_REQUEST_GET_DESCRIPTOR
-    device_description_request.contents.SetupPacket.wValue = USB_DEVICE_DESCRIPTOR_TYPE << 8
-    device_description_request.contents.SetupPacket.wLength = ctypes.sizeof(USB_DEVICE_DESCRIPTOR)
-
-    # Send usb device description request.
-    if not DeviceIoControl(
-            h_hub_device,
-            IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
-            device_description_request_buffer,
-            ctypes.sizeof(device_description_request_buffer),
-            device_description_request_buffer,
-            ctypes.sizeof(device_description_request_buffer),
-            None,
-            None
-    ):
-        return None
-
-    # Get device description.
-    return USB_DEVICE_DESCRIPTOR.from_buffer_copy(device_description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST))
-
-
-def request_usb_configuration_description(h_hub_device, usb_hub_port, bConfigurationValue):
-    # Filling setup package for requesting configuration description.
-    configuration_description_request_buffer = ctypes.create_string_buffer(
-        ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + ctypes.sizeof(USB_CONFIGURATION_DESCRIPTOR)
-    )
-    configuration_description_request = ctypes.cast(
-        configuration_description_request_buffer,
-        ctypes.POINTER(USB_DESCRIPTOR_REQUEST)
-    )
-    configuration_description_request.contents.ConnectionIndex = usb_hub_port
-    configuration_description_request.contents.SetupPacket.bmRequest = 0x80
-    configuration_description_request.contents.SetupPacket.bRequest = USB_REQUEST_GET_DESCRIPTOR
-    configuration_description_request.contents.SetupPacket.wValue = (USB_CONFIGURATION_DESCRIPTOR_TYPE << 8) | (bConfigurationValue - 1)
-    configuration_description_request.contents.SetupPacket.wLength = ctypes.sizeof(USB_CONFIGURATION_DESCRIPTOR)
-
-    # Send usb configuration description request.
-    if not DeviceIoControl(
-            h_hub_device,
-            IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
-            configuration_description_request_buffer,
-            ctypes.sizeof(configuration_description_request_buffer),
-            configuration_description_request_buffer,
-            ctypes.sizeof(configuration_description_request_buffer),
-            None,
-            None
-    ):
-        return None
-
-    # Get configuration description.
-    return USB_CONFIGURATION_DESCRIPTOR.from_buffer_copy(configuration_description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST))
-
-
-def request_usb_interface_descriptions(h_hub_device, usb_hub_port, configuration_description, bInterfaceNumber, bAlternateSetting=0):
-    # Single interface usb device.
-    if bInterfaceNumber is None:
-        bInterfaceNumber = 0
-
-    # Now request the entire Configuration Descriptor using a dynamically
-    # allocated buffer which is sized big enough to hold the entire descriptor
-    configuration_description_request_buffer = ctypes.create_string_buffer(
-        ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + configuration_description.wTotalLength
-    )
-    configuration_description_request = ctypes.cast(
-        configuration_description_request_buffer,
-        ctypes.POINTER(USB_DESCRIPTOR_REQUEST)
-    )
-    configuration_description_request.contents.ConnectionIndex = usb_hub_port
-    configuration_description_request.contents.SetupPacket.bmRequest = 0x80
-    configuration_description_request.contents.SetupPacket.bRequest = USB_REQUEST_GET_DESCRIPTOR
-    configuration_description_request.contents.SetupPacket.wValue = (USB_CONFIGURATION_DESCRIPTOR_TYPE << 8) | (configuration_description.bConfigurationValue - 1)
-    configuration_description_request.contents.SetupPacket.wLength = configuration_description.wTotalLength
-
-    # Send usb configuration description request.
-    if not DeviceIoControl(
-            h_hub_device,
-            IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
-            configuration_description_request_buffer,
-            ctypes.sizeof(configuration_description_request_buffer),
-            configuration_description_request_buffer,
-            ctypes.sizeof(configuration_description_request_buffer),
-            None,
-            None
-    ):
-        return None
-
-    # https://github.com/microsoft/Windows-driver-samples/blob/main/usb/usbview/enum.c#L2413
-    common_description_offset = 0
-    target_interface_association_description = None
-    target_interface_description = None
-    while True:
-        if common_description_offset + ctypes.sizeof(USB_COMMON_DESCRIPTOR) < configuration_description.wTotalLength:
-            common_description = ctypes.cast(
-                ctypes.byref(configuration_description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset),
-                ctypes.POINTER(USB_COMMON_DESCRIPTOR)
-            )
-            if common_description_offset + common_description.contents.bLength <= configuration_description.wTotalLength:
-                if common_description.contents.bDescriptorType == USB_INTERFACE_ASSOCIATION_DESCRIPTOR_TYPE:
-                    if common_description.contents.bLength == ctypes.sizeof(USB_INTERFACE_ASSOCIATION_DESCRIPTOR):
-                        interface_association_description = ctypes.cast(
-                            ctypes.byref(configuration_description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset),
-                            ctypes.POINTER(USB_INTERFACE_ASSOCIATION_DESCRIPTOR)
-                        )
-                        if interface_association_description.contents.bFirstInterface <= bInterfaceNumber <= interface_association_description.contents.bFirstInterface + interface_association_description.contents.bInterfaceCount - 1:
-                            target_interface_association_description = USB_INTERFACE_ASSOCIATION_DESCRIPTOR.from_buffer_copy(
-                                configuration_description_request_buffer,
-                                ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
-                            )
-                    else:
-                        break
-
-                if common_description.contents.bDescriptorType == USB_INTERFACE_DESCRIPTOR_TYPE:
-                    if common_description.contents.bLength == ctypes.sizeof(USB_INTERFACE_DESCRIPTOR):
-                        interface_description = ctypes.cast(
-                            ctypes.byref(configuration_description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset),
-                            ctypes.POINTER(USB_INTERFACE_DESCRIPTOR)
-                        )
-                        if interface_description.contents.bInterfaceNumber == bInterfaceNumber and interface_description.contents.bAlternateSetting == bAlternateSetting:
-                            target_interface_description = USB_INTERFACE_DESCRIPTOR.from_buffer_copy(
-                                configuration_description_request_buffer,
-                                ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
-                            )
-                    else:
-                        break
-
-                # interface association description precedes interface description
-                # https://www.usb.org/sites/default/files/iadclasscode_r10.pdf figure 2-1
-                if target_interface_description is not None:
-                    break
-
-                common_description_offset += common_description.contents.bLength
-            else:
-                break
-        else:
-            break
-    return target_interface_association_description, target_interface_description
-
-
-def request_usb_connection_info(h_hub_device, usb_hub_port):
-    connection_info = USB_NODE_CONNECTION_INFORMATION_EX()
-    connection_info.ConnectionIndex = usb_hub_port
-    if not DeviceIoControl(
-            h_hub_device,
-            IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX,
-            ctypes.byref(connection_info),
-            ctypes.sizeof(USB_NODE_CONNECTION_INFORMATION_EX),
-            ctypes.byref(connection_info),
-            ctypes.sizeof(USB_NODE_CONNECTION_INFORMATION_EX),
-            None,
-            None
-    ):
-        return None
-    return connection_info
 
 
 class cached_property:
@@ -923,9 +682,38 @@ class DeviceNode:
 
 
 class DeviceInterface(DeviceNode):
+    guid_list = []
+
     def __init__(self, interface):
         self.__interface = interface
         super().__init__(self.instance_handle)
+
+    @classmethod
+    def enumerate_device(cls):
+        # Repeat for all possible GUIDs.
+        for guid in cls.guid_list:
+            device_interface_list_size = ctypes.c_ulong()
+            cr = CM_Get_Device_Interface_List_SizeW(
+                ctypes.byref(device_interface_list_size),
+                ctypes.byref(guid),
+                None,
+                CM_GET_DEVICE_INTERFACE_LIST_PRESENT
+            )
+            if cr != CR_SUCCESS:
+                raise ctypes.WinError(CM_MapCrToWin32Err(cr, 0))
+            if device_interface_list_size.value > 1:
+                device_interface_list = ctypes.create_unicode_buffer(device_interface_list_size.value)
+                cr = CM_Get_Device_Interface_ListW(
+                    ctypes.byref(guid),
+                    None,
+                    device_interface_list,
+                    ctypes.sizeof(device_interface_list),
+                    CM_GET_DEVICE_INTERFACE_LIST_PRESENT
+                )
+                if cr != CR_SUCCESS:
+                    raise ctypes.WinError(CM_MapCrToWin32Err(cr, 0))
+                for interface in ctypes.wstring_at(device_interface_list, device_interface_list_size.value).strip('\0').split('\0'):
+                    yield cls(interface)
 
     @property
     def interface(self):
@@ -974,6 +762,596 @@ class DeviceInterface(DeviceNode):
         return parse_device_property(buffer, buffer_size, property_type)
 
 
+class PortDevice(DeviceInterface):
+    # Use GUID_DEVINTERFACE_COMPORT and GUID_DEVINTERFACE_MODEM instead of GUID_CLASS_COMPORT and GUID_CLASS_MODEM.
+    # https://code.qt.io/cgit/qt/qtserialport.git/commit/?id=63bfe5ea4203af3c294691216ddfb7dc29f310f7
+    guid_list = [
+        GUID_DEVINTERFACE_COMPORT,
+        GUID_DEVINTERFACE_MODEM
+    ]
+
+    def __init__(self, interface):
+        super().__init__(interface)
+
+    def __eq__(self, other):
+        return self.sorting_key == other.sorting_key
+
+    def __lt__(self, other):
+        return self.sorting_key < other.sorting_key
+
+    @cached_property
+    def sorting_key(self):
+        return split_text_number(self.port_name)
+
+    def parse_interface_number_from_instance_identifier(self):
+        # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/standard-usb-identifiers
+        # USB example: USB\VID_303A&PID_4001&MI_00\6&182C0AC9&0&0000
+        m = re.fullmatch(r'USB\\VID_[0-9a-f]{4}&PID_[0-9a-f]{4}&MI_(\d{2})\\.*?', self.instance_identifier, re.IGNORECASE)
+        if m is not None:
+            return int(m.group(1))
+        # https://github.com/pololu/libusbp/blob/master/src/windows/interface_windows.c#L222
+        # FTDIBUS example: FTDIBUS\VID_0403+PID_6001+B001ADZMA\0000
+        m = re.fullmatch(r'FTDIBUS\\.*\\([0-9a-f]*)', self.instance_identifier, re.IGNORECASE)
+        if m is not None:
+            return int(m.group(1))
+        return None
+
+    def wake_up_device(self):
+        # Ugly solution: trigger the port to wake up the usb device.
+        port_handle = CreateFileW(
+            '\\\\.\\' + self.port_name,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            0
+        )
+        if port_handle == INVALID_HANDLE_VALUE:
+            raise ctypes.WinError(ctypes.GetLastError())
+        CloseHandle(port_handle)
+
+    def get_usb_info(self, all_hub_devices=None, sorted_usb_host_controllers=None):
+        # Enumerate and store the instance numbers of all connected usb hubs.
+        if all_hub_devices is None:
+            all_hub_devices = set(USBHubDevice.enumerate_device())
+        if sorted_usb_host_controllers is None:
+            sorted_usb_host_controllers = sorted(USBHostControllerDevice.enumerate_device())
+
+        # Get parent hub device and usb device recursively.
+        usb_device = self
+        while True:
+            parent_device = usb_device.parent
+            if parent_device is None:
+                return None
+            hub_device = find_from_iterable(all_hub_devices, parent_device)
+            if hub_device is not None:
+                break
+            usb_device = parent_device
+
+        # Get usb host controller.
+        parent_device = hub_device
+        while parent_device is not None:
+            usb_host_controller_device = find_from_iterable(sorted_usb_host_controllers, parent_device)
+            if usb_host_controller_device is not None:
+                break
+            parent_device = parent_device.parent
+        else:
+            return None
+
+        # Check the power status of the usb device.
+        power_data = usb_device.power_data
+        if power_data is not None:
+            if power_data.PD_MostRecentPowerState != 1:
+                # The device is in sleep state. It needs to be woken up to D0 state to get the usb description.
+                self.wake_up_device()
+
+        # Get the port number that the usb device is connected to.
+        # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/devpkey-device-address
+        usb_hub_port = usb_device.address
+        if usb_hub_port is None:
+            return None
+
+        # Generate the hub path and open it.
+        # Solution 1: https://stackoverflow.com/questions/28007468/how-do-i-obtain-usb-device-descriptor-given-a-device-path
+        # hub_path = "\\\\?\\" + hub_device.instance_identifier.replace("\\", "#") + f"#{GUID_DEVINTERFACE_USB_HUB}"
+        # Solution 2: https://stackoverflow.com/questions/21703592/open-device-name-using-createfile
+        # hub_path = "\\\\?\\Global\\GLOBALROOT" + hub_device.physical_device_object_name
+        # Solution 3: Just using the interface string.
+        hub_path = hub_device.interface
+        with USBHubDeviceIO(hub_path) as hub_io:
+            if not hub_io.is_open:
+                return None
+
+            # Request usb device connection info.
+            connection_info = hub_io.request_usb_connection_info(usb_hub_port)
+            if connection_info is None:
+                # Fallback to request usb device description.
+                device_description = hub_io.request_usb_device_description(usb_hub_port)
+                if device_description is None:
+                    # We can't get any information.
+                    return None
+            else:
+                device_description = connection_info.DeviceDescriptor
+
+            # Get product identifier and vendor identifier.
+            pid = device_description.idProduct
+            vid = device_description.idVendor
+
+            # Request string description at iProduct, iManufacturer and iSerialNumber.
+            language_id = hub_io.suggest_language_id(usb_hub_port)
+            product = hub_io.request_usb_string_description(usb_hub_port, device_description.iProduct, language_id)
+            manufacturer = hub_io.request_usb_string_description(usb_hub_port, device_description.iManufacturer, language_id)
+            serial_number = hub_io.request_usb_string_description(usb_hub_port, device_description.iSerialNumber, language_id)
+
+            # Get the bConfigurationValue.
+            bConfigurationValue = None
+            if connection_info is not None:
+                # Get bConfigurationValue from device connection info.
+                bConfigurationValue = connection_info.CurrentConfigurationValue
+            elif device_description.bNumConfigurations == 1:
+                # Mostly, there is only one Configuration, and bConfigurationValue is equal to 1.
+                bConfigurationValue = 1
+
+            # Get the bInterfaceNumber.
+            bInterfaceNumber = None
+            location_paths = self.location_paths
+            if location_paths is not None:
+                # Parse interface number from location paths.
+                for p in location_paths:
+                    # Find the #USBMI(?) patten in the last part of location string.
+                    m = re.fullmatch(r'.*?#USBMI\((\d+)\)', p, re.IGNORECASE)
+                    if m is not None:
+                        bInterfaceNumber = int(m.group(1))
+                        break
+            else:
+                # Try to parse interface number from hardware identifier string.
+                bInterfaceNumber = self.parse_interface_number_from_instance_identifier()
+
+            # Read interface description.
+            function = None
+            interface = None
+            if bConfigurationValue is not None:
+                configuration_description = hub_io.request_usb_configuration_description(usb_hub_port, bConfigurationValue)
+                if configuration_description is not None:
+                    if device_description.bNumConfigurations == 1 and configuration_description.bNumInterfaces == 1:
+                        # Usb device with single interface.
+                        bInterfaceNumber = None  # Set to None to distinguish composite devices.
+                    # Get interface string of bInterfaceNumber.
+                    # There is only one alternative interface in most cases (bAlternateSetting == 0).
+                    # If we don't know bAlternateSetting, then use the default interface.
+                    interface_association_description, interface_description = \
+                        hub_io.request_usb_interface_descriptions(
+                            usb_hub_port,
+                            configuration_description,
+                            bInterfaceNumber
+                        )
+                    if interface_association_description is not None:
+                        function = hub_io.request_usb_string_description(
+                            usb_hub_port,
+                            interface_association_description.iFunction,
+                            language_id
+                        )
+                    if interface_description is not None:
+                        interface = hub_io.request_usb_string_description(
+                            usb_hub_port,
+                            interface_description.iInterface,
+                            language_id
+                        )
+
+        # Generate location string compatible with linux usbfs.
+        location = get_location_string(
+            usb_device,
+            usb_host_controller_device,
+            bConfigurationValue=bConfigurationValue,
+            bInterfaceNumber=bInterfaceNumber
+        )
+        return USBInfo(pid, vid, product, manufacturer, serial_number, location, function, interface)
+
+
+class USBHostControllerDevice(DeviceInterface):
+    guid_list = [GUID_DEVINTERFACE_USB_HOST_CONTROLLER]
+    usb_bus_list = []
+
+    def __init__(self, interface):
+        super().__init__(interface)
+
+    @property
+    def bus_number(self):
+        if self.instance_identifier not in self.usb_bus_list:
+            self.usb_bus_list.append(self.instance_identifier)
+        return self.usb_bus_list.index(self.instance_identifier) + 1
+
+    def get_root_hub_name(self):
+        hdev = CreateFileW(
+            self.interface,
+            GENERIC_WRITE,
+            2,
+            None,
+            OPEN_EXISTING,
+            0,
+            None
+        )
+        if hdev == INVALID_HANDLE_VALUE:
+            return None
+        root_hub_name_request = USB_ROOT_HUB_NAME()
+        success = DeviceIoControl(
+            hdev,
+            IOCTL_USB_GET_ROOT_HUB_NAME,
+            0,
+            0,
+            ctypes.byref(root_hub_name_request),
+            ctypes.sizeof(root_hub_name_request),
+            None,
+            None
+        )
+        if not success:
+            CloseHandle(hdev)
+            return None
+        root_hub_name_buffer = ctypes.create_string_buffer(root_hub_name_request.ActualLength)
+        success = DeviceIoControl(
+            hdev,
+            IOCTL_USB_GET_ROOT_HUB_NAME,
+            0,
+            0,
+            root_hub_name_buffer,
+            ctypes.sizeof(root_hub_name_buffer),
+            None,
+            None
+        )
+        if not success:
+            CloseHandle(hdev)
+            return None
+        CloseHandle(hdev)
+        return ctypes.wstring_at(
+            root_hub_name_buffer[ctypes.sizeof(USB_ROOT_HUB_NAME) - 2:ctypes.sizeof(root_hub_name_buffer)]
+        )
+
+
+class USBHubDevice(DeviceInterface):
+    guid_list = [GUID_DEVINTERFACE_USB_HUB]
+
+    def __init__(self, interface):
+        super().__init__(interface)
+
+
+class USBHubDeviceIO:
+    def __init__(self, device_path):
+        self.device_path = device_path
+        self.device_handle = INVALID_HANDLE_VALUE
+
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    @property
+    def is_open(self):
+        return self.device_handle != INVALID_HANDLE_VALUE
+
+    def open(self):
+        self.device_handle = CreateFileW(
+            self.device_path,
+            GENERIC_WRITE,
+            2,
+            None,
+            OPEN_EXISTING,
+            0,
+            None
+        )
+
+    def close(self):
+        CloseHandle(self.device_handle)
+
+    def request_supported_languages(self, usb_hub_port):
+        # Filling setup package.
+        description_request_buffer = ctypes.create_string_buffer(
+            ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + ctypes.sizeof(USB_STRING_DESCRIPTOR)
+        )
+        description_request = ctypes.cast(description_request_buffer, ctypes.POINTER(USB_DESCRIPTOR_REQUEST))
+        description_request.contents.ConnectionIndex = usb_hub_port
+        description_request.contents.SetupPacket.wValue = USB_STRING_DESCRIPTOR_TYPE << 8
+        description_request.contents.SetupPacket.wIndex = 0
+        description_request.contents.SetupPacket.wLength = \
+            ctypes.sizeof(description_request_buffer) - ctypes.sizeof(USB_DESCRIPTOR_REQUEST)
+
+        # Send string description request.
+        if not DeviceIoControl(
+                self.device_handle,
+                IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+                description_request_buffer,
+                ctypes.sizeof(description_request_buffer),
+                description_request_buffer,
+                ctypes.sizeof(description_request_buffer),
+                None,
+                None
+        ):
+            return None
+
+        # Parse string description from wstring buffer.
+        description = ctypes.cast(
+            ctypes.byref(description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST)),
+            ctypes.POINTER(USB_STRING_DESCRIPTOR)
+        )
+        languages = []
+        for i in range(2, description.contents.bLength, 2):
+            languages.append(ctypes.c_uint16.from_buffer(
+                description_request_buffer,
+                ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + i
+            ).value)
+        return languages
+
+    def suggest_language_id(self, usb_hub_port):
+        available_languages = self.request_supported_languages(usb_hub_port)
+        if available_languages is None:
+            return 0x0409
+        default_language = GetUserDefaultLangID()
+        if default_language in available_languages:
+            return default_language
+        else:
+            return available_languages[0]
+
+    def request_usb_string_description(self, usb_hub_port, string_index, langid=None):
+        if string_index == 0:
+            # There is no string description at this index.
+            return None
+
+        # Get a list of supported languages from index 0, and match langid to system default language.
+        if langid is None:
+            langid = self.suggest_language_id(usb_hub_port)
+
+        # Filling setup package.
+        description_request_buffer = \
+            ctypes.create_string_buffer(ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + ctypes.sizeof(USB_STRING_DESCRIPTOR))
+        description_request = ctypes.cast(description_request_buffer, ctypes.POINTER(USB_DESCRIPTOR_REQUEST))
+        description_request.contents.ConnectionIndex = usb_hub_port
+        description_request.contents.SetupPacket.wValue = (USB_STRING_DESCRIPTOR_TYPE << 8) | string_index
+        description_request.contents.SetupPacket.wIndex = langid
+        description_request.contents.SetupPacket.wLength = \
+            ctypes.sizeof(description_request_buffer) - ctypes.sizeof(USB_DESCRIPTOR_REQUEST)
+
+        # Send string description request.
+        if not DeviceIoControl(
+                self.device_handle,
+                IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+                description_request_buffer,
+                ctypes.sizeof(description_request_buffer),
+                description_request_buffer,
+                ctypes.sizeof(description_request_buffer),
+                None,
+                None
+        ):
+            return None
+
+        # Parse string description from wstring buffer.
+        description = ctypes.cast(
+            ctypes.byref(description_request_buffer, ctypes.sizeof(USB_DESCRIPTOR_REQUEST)),
+            ctypes.POINTER(USB_STRING_DESCRIPTOR)
+        )
+        return ctypes.wstring_at(description.contents.bString, description.contents.bLength // 2 - 1)
+
+    def request_usb_device_description(self, usb_hub_port):
+        # Filling setup package for requesting device description.
+        device_description_request_buffer = ctypes.create_string_buffer(
+            ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + ctypes.sizeof(USB_DEVICE_DESCRIPTOR)
+        )
+        device_description_request = ctypes.cast(
+            device_description_request_buffer,
+            ctypes.POINTER(USB_DESCRIPTOR_REQUEST)
+        )
+        device_description_request.contents.ConnectionIndex = usb_hub_port
+        device_description_request.contents.SetupPacket.bmRequest = 0x80
+        device_description_request.contents.SetupPacket.bRequest = USB_REQUEST_GET_DESCRIPTOR
+        device_description_request.contents.SetupPacket.wValue = USB_DEVICE_DESCRIPTOR_TYPE << 8
+        device_description_request.contents.SetupPacket.wLength = ctypes.sizeof(USB_DEVICE_DESCRIPTOR)
+
+        # Send usb device description request.
+        if not DeviceIoControl(
+                self.device_handle,
+                IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+                device_description_request_buffer,
+                ctypes.sizeof(device_description_request_buffer),
+                device_description_request_buffer,
+                ctypes.sizeof(device_description_request_buffer),
+                None,
+                None
+        ):
+            return None
+
+        # Get device description.
+        return USB_DEVICE_DESCRIPTOR.from_buffer_copy(
+            device_description_request_buffer,
+            ctypes.sizeof(USB_DESCRIPTOR_REQUEST)
+        )
+
+    def request_usb_configuration_description(self, usb_hub_port, bConfigurationValue):
+        # Filling setup package for requesting configuration description.
+        configuration_description_request_buffer = ctypes.create_string_buffer(
+            ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + ctypes.sizeof(USB_CONFIGURATION_DESCRIPTOR)
+        )
+        configuration_description_request = ctypes.cast(
+            configuration_description_request_buffer,
+            ctypes.POINTER(USB_DESCRIPTOR_REQUEST)
+        )
+        configuration_description_request.contents.ConnectionIndex = usb_hub_port
+        configuration_description_request.contents.SetupPacket.bmRequest = 0x80
+        configuration_description_request.contents.SetupPacket.bRequest = USB_REQUEST_GET_DESCRIPTOR
+        configuration_description_request.contents.SetupPacket.wValue = \
+            (USB_CONFIGURATION_DESCRIPTOR_TYPE << 8) | (bConfigurationValue - 1)
+        configuration_description_request.contents.SetupPacket.wLength = ctypes.sizeof(USB_CONFIGURATION_DESCRIPTOR)
+
+        # Send usb configuration description request.
+        if not DeviceIoControl(
+                self.device_handle,
+                IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+                configuration_description_request_buffer,
+                ctypes.sizeof(configuration_description_request_buffer),
+                configuration_description_request_buffer,
+                ctypes.sizeof(configuration_description_request_buffer),
+                None,
+                None
+        ):
+            return None
+
+        # Get configuration description.
+        return USB_CONFIGURATION_DESCRIPTOR.from_buffer_copy(
+            configuration_description_request_buffer,
+            ctypes.sizeof(USB_DESCRIPTOR_REQUEST)
+        )
+
+    def request_usb_interface_descriptions(self, usb_hub_port, configuration_description, bInterfaceNumber, bAlternateSetting=0):
+        # Single interface usb device.
+        if bInterfaceNumber is None:
+            bInterfaceNumber = 0
+
+        # Now request the entire Configuration Descriptor using a dynamically
+        # allocated buffer which is sized big enough to hold the entire descriptor
+        configuration_description_request_buffer = ctypes.create_string_buffer(
+            ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + configuration_description.wTotalLength
+        )
+        configuration_description_request = ctypes.cast(
+            configuration_description_request_buffer,
+            ctypes.POINTER(USB_DESCRIPTOR_REQUEST)
+        )
+        configuration_description_request.contents.ConnectionIndex = usb_hub_port
+        configuration_description_request.contents.SetupPacket.bmRequest = 0x80
+        configuration_description_request.contents.SetupPacket.bRequest = USB_REQUEST_GET_DESCRIPTOR
+        configuration_description_request.contents.SetupPacket.wValue = \
+            (USB_CONFIGURATION_DESCRIPTOR_TYPE << 8) | (configuration_description.bConfigurationValue - 1)
+        configuration_description_request.contents.SetupPacket.wLength = configuration_description.wTotalLength
+
+        # Send usb configuration description request.
+        if not DeviceIoControl(
+                self.device_handle,
+                IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+                configuration_description_request_buffer,
+                ctypes.sizeof(configuration_description_request_buffer),
+                configuration_description_request_buffer,
+                ctypes.sizeof(configuration_description_request_buffer),
+                None,
+                None
+        ):
+            return None
+
+        # https://github.com/microsoft/Windows-driver-samples/blob/main/usb/usbview/enum.c#L2413
+        common_description_offset = 0
+        target_interface_association_description = None
+        target_interface_description = None
+        while True:
+            if common_description_offset + ctypes.sizeof(USB_COMMON_DESCRIPTOR) \
+                    < configuration_description.wTotalLength:
+                common_description = ctypes.cast(
+                    ctypes.byref(
+                        configuration_description_request_buffer,
+                        ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
+                    ),
+                    ctypes.POINTER(USB_COMMON_DESCRIPTOR)
+                )
+                if common_description_offset + common_description.contents.bLength \
+                        <= configuration_description.wTotalLength:
+                    if common_description.contents.bDescriptorType == USB_INTERFACE_ASSOCIATION_DESCRIPTOR_TYPE:
+                        if common_description.contents.bLength == ctypes.sizeof(USB_INTERFACE_ASSOCIATION_DESCRIPTOR):
+                            interface_association_description = ctypes.cast(
+                                ctypes.byref(
+                                    configuration_description_request_buffer,
+                                    ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
+                                ),
+                                ctypes.POINTER(USB_INTERFACE_ASSOCIATION_DESCRIPTOR)
+                            )
+                            if interface_association_description.contents.bFirstInterface \
+                                    <= bInterfaceNumber \
+                                    <= interface_association_description.contents.bFirstInterface \
+                                    + interface_association_description.contents.bInterfaceCount - 1:
+                                target_interface_association_description = \
+                                    USB_INTERFACE_ASSOCIATION_DESCRIPTOR.from_buffer_copy(
+                                        configuration_description_request_buffer,
+                                        ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
+                                    )
+                        else:
+                            break
+
+                    if common_description.contents.bDescriptorType == USB_INTERFACE_DESCRIPTOR_TYPE:
+                        if common_description.contents.bLength == ctypes.sizeof(USB_INTERFACE_DESCRIPTOR):
+                            interface_description = ctypes.cast(
+                                ctypes.byref(
+                                    configuration_description_request_buffer,
+                                    ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
+                                ),
+                                ctypes.POINTER(USB_INTERFACE_DESCRIPTOR)
+                            )
+                            if interface_description.contents.bInterfaceNumber == bInterfaceNumber \
+                                    and interface_description.contents.bAlternateSetting == bAlternateSetting:
+                                target_interface_description = USB_INTERFACE_DESCRIPTOR.from_buffer_copy(
+                                    configuration_description_request_buffer,
+                                    ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + common_description_offset
+                                )
+                        else:
+                            break
+
+                    # interface association description precedes interface description
+                    # https://www.usb.org/sites/default/files/iadclasscode_r10.pdf figure 2-1
+                    if target_interface_description is not None:
+                        break
+
+                    common_description_offset += common_description.contents.bLength
+                else:
+                    break
+            else:
+                break
+        return target_interface_association_description, target_interface_description
+
+    def request_usb_connection_info(self, usb_hub_port):
+        connection_info = USB_NODE_CONNECTION_INFORMATION_EX()
+        connection_info.ConnectionIndex = usb_hub_port
+        if not DeviceIoControl(
+                self.device_handle,
+                IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX,
+                ctypes.byref(connection_info),
+                ctypes.sizeof(USB_NODE_CONNECTION_INFORMATION_EX),
+                ctypes.byref(connection_info),
+                ctypes.sizeof(USB_NODE_CONNECTION_INFORMATION_EX),
+                None,
+                None
+        ):
+            return None
+        return connection_info
+
+    def get_external_hub_name(self, usb_hub_port):
+        node_name_request = USB_NODE_CONNECTION_NAME()
+        node_name_request.ConnectionIndex = usb_hub_port
+        success = DeviceIoControl(
+            self.device_handle,
+            IOCTL_USB_GET_NODE_CONNECTION_NAME,
+            ctypes.byref(node_name_request),
+            ctypes.sizeof(node_name_request),
+            ctypes.byref(node_name_request),
+            ctypes.sizeof(node_name_request),
+            None,
+            None
+        )
+        if not success:
+            return None
+        node_name_buffer = ctypes.create_string_buffer(node_name_request.ActualLength)
+        ctypes.cast(node_name_buffer, ctypes.POINTER(USB_NODE_CONNECTION_NAME)).contents.ConnectionIndex = usb_hub_port
+        success = DeviceIoControl(
+            self.device_handle,
+            IOCTL_USB_GET_NODE_CONNECTION_NAME,
+            node_name_buffer,
+            ctypes.sizeof(node_name_buffer),
+            node_name_buffer,
+            ctypes.sizeof(node_name_buffer),
+            None,
+            None
+        )
+        if not success:
+            return None
+        return ctypes.wstring_at(
+            node_name_buffer[ctypes.sizeof(USB_NODE_CONNECTION_NAME) - 2:ctypes.sizeof(node_name_buffer)]
+        )
+
+
 class USBInfo:
     def __init__(self, pid, vid, product, manufacturer, serial_number, location, function, interface):
         self.pid = pid
@@ -989,228 +1367,13 @@ class USBInfo:
         return f'{self.location} - {self.vid:04X}:{self.pid:04X} - {self.product} - {self.manufacturer} - {self.serial_number} - {self.function} - {self.interface}'
 
 
-def wake_up_device(port_device):
-    # Ugly solution: trigger the port to wake up the usb device.
-    port_handle = CreateFileW(
-        '\\\\.\\' + port_device.port_name,
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        None,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        0
-    )
-    if port_handle == INVALID_HANDLE_VALUE:
-        raise ctypes.WinError(ctypes.GetLastError())
-    CloseHandle(port_handle)
-
-
-def get_usb_info(port_device: DeviceInterface, all_hub_devices=None, sorted_usb_host_controllers=None):
-    # Enumerate and store the instance numbers of all connected usb hubs.
-    if all_hub_devices is None:
-        all_hub_devices = enumerate_usb_hub()
-    if sorted_usb_host_controllers is None:
-        sorted_usb_host_controllers = enumerate_usb_host_controller()
-
-    # Look up parent hub and usb recursively.
-    hub_and_usb = find_parent_hub_and_usb(port_device, all_hub_devices)
-    if hub_and_usb is None:
-        return None
-    hub_device, usb_device = hub_and_usb
-
-    # Check the power status of the usb device.
-    power_data = usb_device.power_data
-    if power_data is not None:
-        if power_data.PD_MostRecentPowerState != 1:
-            # The device is in sleep state. It needs to be woken up to D0 state to get the usb description.
-            wake_up_device(port_device)
-
-    # Generate the hub path and open it.
-    # Solution 1: https://stackoverflow.com/questions/28007468/how-do-i-obtain-usb-device-descriptor-given-a-device-path
-    # hub_path = "\\\\?\\" + hub_device.instance_identifier.replace("\\", "#") + f"#{GUID_DEVINTERFACE_USB_HUB}"
-    # Solution 2: https://stackoverflow.com/questions/21703592/open-device-name-using-createfile
-    # hub_path = "\\\\?\\Global\\GLOBALROOT" + hub_device.physical_device_object_name
-    # Solution 3: Just using the interface string.
-    hub_path = hub_device.interface
-    h_hub_device = CreateFileW(
-        hub_path,
-        GENERIC_WRITE,
-        2,
-        None,
-        OPEN_EXISTING,
-        0,
-        None
-    )
-    if h_hub_device == INVALID_HANDLE_VALUE:
-        return None
-
-    # Get the port number that the usb device is connected to.
-    # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/devpkey-device-address
-    usb_hub_port = usb_device.address
-    if usb_hub_port is None:
-        return None
-
-    # Request usb device connection info.
-    connection_info = request_usb_connection_info(h_hub_device, usb_hub_port)
-    if connection_info is None:
-        # Fallback to request usb device description.
-        device_description = request_usb_device_description(h_hub_device, usb_hub_port)
-        if device_description is None:
-            # We can't get any information.
-            CloseHandle(h_hub_device)
-            return None
-    else:
-        device_description = connection_info.DeviceDescriptor
-
-    # Get product identifier and vendor identifier.
-    pid = device_description.idProduct
-    vid = device_description.idVendor
-
-    # Request string description at iProduct, iManufacturer and iSerialNumber.
-    language_id = request_and_select_language_id(h_hub_device, usb_hub_port)
-    product = request_usb_string_description(h_hub_device, usb_hub_port, device_description.iProduct, language_id)
-    manufacturer = request_usb_string_description(h_hub_device, usb_hub_port, device_description.iManufacturer, language_id)
-    serial_number = request_usb_string_description(h_hub_device, usb_hub_port, device_description.iSerialNumber, language_id)
-
-    # Get the bConfigurationValue.
-    bConfigurationValue = None
-    if connection_info is not None:
-        # Get bConfigurationValue from device connection info.
-        bConfigurationValue = connection_info.CurrentConfigurationValue
-    elif device_description.bNumConfigurations == 1:
-        # Mostly, there is only one Configuration, and bConfigurationValue is equal to 1.
-        bConfigurationValue = 1
-
-    # Get the bInterfaceNumber.
-    bInterfaceNumber = None
-    location_paths = port_device.location_paths
-    if location_paths is not None:
-        # Parse interface number from location paths.
-        for p in location_paths:
-            # Find the #USBMI(?) patten in the last part of location string.
-            m = re.fullmatch(r'.*?#USBMI\((\d+)\)', p, re.IGNORECASE)
-            if m is not None:
-                bInterfaceNumber = int(m.group(1))
-                break
-    else:
-        # Try to parse interface number from hardware identifier string.
-        bInterfaceNumber = parse_interface_number(port_device.instance_identifier)
-
-    # Read interface description.
-    function = None
-    interface = None
-    if bConfigurationValue is not None:
-        configuration_description = request_usb_configuration_description(h_hub_device, usb_hub_port, bConfigurationValue)
-        if configuration_description is not None:
-            if device_description.bNumConfigurations == 1 and configuration_description.bNumInterfaces == 1:
-                # Usb device with single interface.
-                bInterfaceNumber = None  # Set to None to distinguish composite devices.
-            # Get interface string of bInterfaceNumber.
-            # There is only one alternative interface in most cases (bAlternateSetting == 0).
-            # If we don't know bAlternateSetting, then use the default interface.
-            interface_association_description, interface_description = request_usb_interface_descriptions(h_hub_device, usb_hub_port, configuration_description, bInterfaceNumber, 0)
-            if interface_association_description is not None:
-                function = request_usb_string_description(h_hub_device, usb_hub_port, interface_association_description.iFunction, language_id)
-            if interface_description is not None:
-                interface = request_usb_string_description(h_hub_device, usb_hub_port, interface_description.iInterface, language_id)
-
-    # Generate location string compatible with linux.
-    location = get_location_string(
-        usb_device,
-        sorted_usb_host_controllers,
-        bConfigurationValue=bConfigurationValue,
-        bInterfaceNumber=bInterfaceNumber
-    )
-
-    # Everything is fine! Finished and close the hub handle.
-    CloseHandle(h_hub_device)
-    return USBInfo(pid, vid, product, manufacturer, serial_number, location, function, interface)
-
-
-def get_host_controller_information(c):
-    h_device = CreateFileW(
-        c.interface,
-        GENERIC_WRITE,
-        2,
-        None,
-        OPEN_EXISTING,
-        0,
-        None
-    )
-    if h_device == INVALID_HANDLE_VALUE:
-        return None
-
-    usb_controller_info = USBUSER_CONTROLLER_INFO_0()
-    usb_controller_info.Header.UsbUserRequest = USBUSER_GET_CONTROLLER_INFO_0
-    usb_controller_info.Header.RequestBufferLength = ctypes.sizeof(usb_controller_info)
-
-    success = DeviceIoControl(
-        h_device,
-        IOCTL_USB_USER_REQUEST,
-        ctypes.byref(usb_controller_info),
-        ctypes.sizeof(usb_controller_info),
-        ctypes.byref(usb_controller_info),
-        ctypes.sizeof(usb_controller_info),
-        None,
-        None
-    )
-    if not success:
-        return None
-
-    CloseHandle(h_device)
-    return usb_controller_info
-
-
-def host_controller_sorting_key(c, compat_linux=False):
-    compare_list = []
-
-    if compat_linux:
-        # Sort the usb host controllers in the unix fashion.
-        # https://unix.stackexchange.com/questions/297178/how-usb-bus-number-and-device-number-been-assigned
-        usb_controller_info = get_host_controller_information(c)
-
-        if usb_controller_info is not None:
-            compare_list.append(usb_controller_info.Info0.ControllerFlavor)
-        else:
-            compare_list.append(float('inf'))
-
-        bus_number = c.bus_number
-        if bus_number is None:
-            compare_list.append(float('inf'))
-        else:
-            compare_list.append(bus_number)
-
-        address = c.address
-        if address is None:
-            compare_list.extend([float('inf'), c.instance_handle])
-        else:
-            device = c.address >> 16
-            function = c.address & 0xffff
-            compare_list.extend([device, function])
-    else:
-        compare_list.append(c.instance_handle)
-
-    return compare_list
-
-
-def get_bus_number(usb_device, sorted_usb_host_controllers):
-    # Get USB bus number (usb host controller).
-    while usb_device is not None:
-        if usb_device in sorted_usb_host_controllers:
-            return sorted_usb_host_controllers.index(usb_device) + 1
-        usb_device = usb_device.parent
-    return None
-
-
-def get_location_string(usb_device, sorted_usb_host_controllers, bConfigurationValue=None, bInterfaceNumber=None):
+def get_location_string(usb_device, usb_host_controller_device, bConfigurationValue=None, bInterfaceNumber=None):
     location_paths = usb_device.location_paths
     if not location_paths:
         return None
     if (bConfigurationValue is None) and (bInterfaceNumber is not None):
         bConfigurationValue = 'x'
-    bus_number = get_bus_number(usb_device, sorted_usb_host_controllers)
-    if bus_number is None:
-        return None
+    bus_number = usb_host_controller_device.bus_number
     location = [str(bus_number)]
     for g in re.finditer(r'#USB\((\w+)\)', location_paths[0]):
         if len(location) > 1:
@@ -1226,88 +1389,12 @@ def get_location_string(usb_device, sorted_usb_host_controllers, bConfigurationV
     return ''.join(location)
 
 
-def get_root_hub_name(pci_device):
-    hdev = CreateFileW(
-        pci_device.interface,
-        GENERIC_WRITE,
-        2,
-        None,
-        OPEN_EXISTING,
-        0,
-        None
-    )
-    if hdev == INVALID_HANDLE_VALUE:
-        return None
-    root_hub_name_request = USB_ROOT_HUB_NAME()
-    success = DeviceIoControl(
-        hdev,
-        IOCTL_USB_GET_ROOT_HUB_NAME,
-        0,
-        0,
-        ctypes.byref(root_hub_name_request),
-        ctypes.sizeof(root_hub_name_request),
-        None,
-        None
-    )
-    if not success:
-        CloseHandle(hdev)
-        return None
-    root_hub_name_buffer = ctypes.create_string_buffer(root_hub_name_request.ActualLength)
-    success = DeviceIoControl(
-        hdev,
-        IOCTL_USB_GET_ROOT_HUB_NAME,
-        0,
-        0,
-        root_hub_name_buffer,
-        ctypes.sizeof(root_hub_name_buffer),
-        None,
-        None
-    )
-    if not success:
-        CloseHandle(hdev)
-        return None
-    CloseHandle(hdev)
-    return ctypes.wstring_at(root_hub_name_buffer[ctypes.sizeof(USB_ROOT_HUB_NAME) - 2:ctypes.sizeof(root_hub_name_buffer)])
-
-
-def get_external_hub_name(h_hub_device, port):
-    node_name_request = USB_NODE_CONNECTION_NAME()
-    node_name_request.ConnectionIndex = port
-    success = DeviceIoControl(
-        h_hub_device,
-        IOCTL_USB_GET_NODE_CONNECTION_NAME,
-        ctypes.byref(node_name_request),
-        ctypes.sizeof(node_name_request),
-        ctypes.byref(node_name_request),
-        ctypes.sizeof(node_name_request),
-        None,
-        None
-    )
-    if not success:
-        return None
-    node_name_buffer = ctypes.create_string_buffer(node_name_request.ActualLength)
-    ctypes.cast(node_name_buffer, ctypes.POINTER(USB_NODE_CONNECTION_NAME)).contents.ConnectionIndex = port
-    success = DeviceIoControl(
-        h_hub_device,
-        IOCTL_USB_GET_NODE_CONNECTION_NAME,
-        node_name_buffer,
-        ctypes.sizeof(node_name_buffer),
-        node_name_buffer,
-        ctypes.sizeof(node_name_buffer),
-        None,
-        None
-    )
-    if not success:
-        return None
-    return ctypes.wstring_at(node_name_buffer[ctypes.sizeof(USB_NODE_CONNECTION_NAME) - 2:ctypes.sizeof(node_name_buffer)])
-
-
 def parse_location_string(location, sorted_usb_host_controllers=None):
     # Parses the location string and returns human-readable node names.
     # http://www.linux-usb.org/FAQ.html#i6
     nodes = []
     if sorted_usb_host_controllers is None:
-        sorted_usb_host_controllers = enumerate_usb_host_controller()
+        sorted_usb_host_controllers = sorted(set(USBHostControllerDevice.enumerate_device()))
     bus_num, port_chain = location.split('-')
     pci_device = sorted_usb_host_controllers[int(bus_num) - 1]
     m = re.match(r'PCI\\VEN_([0-9a-f]{4})&DEV_([0-9a-f]{4})&SUBSYS_[0-9a-f]{8}&REV_[0-9a-f]{2}', pci_device.instance_identifier, re.IGNORECASE)
@@ -1315,7 +1402,7 @@ def parse_location_string(location, sorted_usb_host_controllers=None):
         return None
     nodes.append(f'Bus {bus_num}: {pci_device.friendly_name}')
 
-    hub_path = "\\\\.\\" + get_root_hub_name(pci_device)
+    hub_path = "\\\\.\\" + pci_device.get_root_hub_name()
     for port in port_chain:
         if port == '.':
             # Skip port spliter
@@ -1331,136 +1418,45 @@ def parse_location_string(location, sorted_usb_host_controllers=None):
         port = int(port)
 
         # Open current hub device
-        h_hub_device = CreateFileW(
-            hub_path,
-            GENERIC_WRITE,
-            2,
-            None,
-            OPEN_EXISTING,
-            0,
-            None
-        )
-        if h_hub_device == INVALID_HANDLE_VALUE:
-            return None
+        with USBHubDeviceIO(hub_path) as hub_io:
+            if not hub_io.is_open:
+                return None
 
-        device_description = request_usb_device_description(h_hub_device, port)
+            device_description = hub_io.request_usb_device_description(port)
 
-        language_id = request_and_select_language_id(h_hub_device, port)
-        product = request_usb_string_description(h_hub_device, port, device_description.iProduct, language_id)
-        manufacturer = request_usb_string_description(h_hub_device, port, device_description.iManufacturer, language_id)
-        nodes.append(f'Port {port}: {manufacturer} - {product}')
+            language_id = hub_io.suggest_language_id(port)
+            product = hub_io.request_usb_string_description(port, device_description.iProduct, language_id)
+            manufacturer = hub_io.request_usb_string_description(port, device_description.iManufacturer, language_id)
+            nodes.append(f'Port {port}: {manufacturer} - {product}')
 
-        hub_path = "\\\\.\\" + get_external_hub_name(h_hub_device, port)
-        CloseHandle(h_hub_device)
+            hub_path = "\\\\.\\" + hub_io.get_external_hub_name(port)
     return nodes
-
-
-def parse_interface_number(instance_identifier):
-    # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/standard-usb-identifiers
-    # USB example: USB\VID_303A&PID_4001&MI_00\6&182C0AC9&0&0000
-    m = re.fullmatch(r'USB\\VID_[0-9a-f]{4}&PID_[0-9a-f]{4}&MI_(\d{2})\\.*?', instance_identifier, re.IGNORECASE)
-    if m is not None:
-        return int(m.group(1))
-    # FTDIBUS example: FTDIBUS\VID_0403+PID_6001+B001ADZMA\0000
-    m = re.fullmatch(r'FTDIBUS\\.*\\([0-9a-f]*)', instance_identifier, re.IGNORECASE)
-    if m is not None:
-        return int(m.group(1))
-    return None
-
-
-def enumerate_device_interface(guid):
-    device_interface_list_size = ctypes.c_ulong()
-    cr = CM_Get_Device_Interface_List_SizeW(
-        ctypes.byref(device_interface_list_size),
-        ctypes.byref(guid),
-        None,
-        CM_GET_DEVICE_INTERFACE_LIST_PRESENT
-    )
-    if cr != CR_SUCCESS:
-        raise ctypes.WinError(CM_MapCrToWin32Err(cr, 0))
-    if device_interface_list_size.value > 1:
-        device_interface_list = ctypes.create_unicode_buffer(device_interface_list_size.value)
-        cr = CM_Get_Device_Interface_ListW(
-            ctypes.byref(guid),
-            None,
-            device_interface_list,
-            ctypes.sizeof(device_interface_list),
-            CM_GET_DEVICE_INTERFACE_LIST_PRESENT
-        )
-        if cr != CR_SUCCESS:
-            raise ctypes.WinError(CM_MapCrToWin32Err(cr, 0))
-        for interface in ctypes.wstring_at(device_interface_list, device_interface_list_size.value).strip('\0').split('\0'):
-            yield DeviceInterface(interface)
-
-
-def enumerate_usb_hub():
-    return set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HUB))
-
-
-def enumerate_usb_host_controller():
-    return sorted(set(enumerate_device_interface(GUID_DEVINTERFACE_USB_HOST_CONTROLLER)), key=host_controller_sorting_key)
-
-
-def find_parent_hub_and_usb(device_node, all_hub_devices):
-    # Get parent hub device and usb device recursively.
-    child_device = device_node
-    while True:
-        parent_device = child_device.parent
-        if parent_device is None:
-            return None
-        target_parent_device = next((x for x in all_hub_devices if x == parent_device), None)
-        if target_parent_device is not None:
-            return target_parent_device, child_device
-        child_device = parent_device
-
-
-def split_text_number(s):
-    result = []
-    for group in re.split(r'(\d+)', s):
-        if group:
-            try:
-                group = int(group)
-            except ValueError:
-                pass
-            result.append(group)
-    return result
-
-
-def port_name_sorting_key(c):
-    # Used to sort COM ports in a language-conforming manner.
-    if isinstance(c, tuple):
-        c = c[0]
-    return split_text_number(c.port_name)
 
 
 def iterate_comports(retrieve_usb_info=False, unique=True):
     # Enumerate and store the instance numbers of all connected usb hubs.
     if retrieve_usb_info:
-        all_hub_devices = enumerate_usb_hub()
-        sorted_usb_host_controllers = enumerate_usb_host_controller()
+        all_hub_devices = set(USBHubDevice.enumerate_device())
+        sorted_usb_host_controllers = sorted(USBHostControllerDevice.enumerate_device())
 
     # Generate non-repeating serial devices.
     if unique:
         yielded_devices = []
 
-    # Repeat for all possible GUIDs.
-    # Use GUID_DEVINTERFACE_COMPORT and GUID_DEVINTERFACE_MODEM instead of GUID_CLASS_COMPORT and GUID_CLASS_MODEM.
-    # https://code.qt.io/cgit/qt/qtserialport.git/commit/?id=63bfe5ea4203af3c294691216ddfb7dc29f310f7
-    for guid in [GUID_DEVINTERFACE_COMPORT, GUID_DEVINTERFACE_MODEM]:
-        # Iterate through each serial device.
-        for port_device in enumerate_device_interface(guid):
-            if unique:
-                if port_device in yielded_devices:
-                    continue
-                else:
-                    yielded_devices.append(port_device)
-            # Request usb information.
-            if retrieve_usb_info:
-                usb_info = get_usb_info(port_device, all_hub_devices, sorted_usb_host_controllers)
-                # usb_info may be None because some serial ports are not usb interfaces (e.g. virtual serial ports).
-                yield port_device, usb_info
+    # Iterate through each serial device.
+    for port_device in PortDevice.enumerate_device():
+        if unique:
+            if port_device in yielded_devices:
+                continue
             else:
-                yield port_device
+                yielded_devices.append(port_device)
+        # Request usb information.
+        if retrieve_usb_info:
+            usb_info = port_device.get_usb_info(all_hub_devices, sorted_usb_host_controllers)
+            # usb_info may be None because some serial ports are not usb interfaces (e.g. virtual serial ports).
+            yield port_device, usb_info
+        else:
+            yield port_device
 
 
 def find_device_from_port_name(port_name):
@@ -1503,7 +1499,7 @@ def comports(include_links=False):
 
 
 def test():
-    for port_device, usb_info in sorted(iterate_comports(retrieve_usb_info=True), key=port_name_sorting_key):
+    for port_device, usb_info in sorted(iterate_comports(retrieve_usb_info=True)):
         print(f'[{port_device.port_name}]')
         if usb_info is None:
             print(f'Description: {port_device.description}')
@@ -1533,7 +1529,6 @@ if __name__ == '__main__':
 
 
 __all__ = [
-    'get_usb_info',
     'find_device_from_port_name',
     'iterate_comports',
     'pyserial_comports',

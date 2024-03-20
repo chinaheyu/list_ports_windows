@@ -23,7 +23,7 @@ Example output:
 
 ```
 [COM9]
-Bus 1: Intel(R) USB 3.20 可扩展主机控制器 - 1.20 (Microsoft)
+Bus 1: Intel(R) USB 3.20 eXtensible Host Controller - 1.20 (Microsoft)
 |__ Port 5: VIA Labs, Inc. - USB2.0 Hub
     |__ Port 2: FTDI - FT232R USB UART
 Location: 1-5.1
@@ -80,7 +80,7 @@ Example output:
 ### Gets information about a specified COM port.
 
 ```python
-from list_ports_windows import find_device_from_port_name, get_usb_info
+from list_ports_windows import find_device_from_port_name
 
 # Find device by port name.
 port_device = find_device_from_port_name('COMx')
@@ -89,7 +89,7 @@ port_device = find_device_from_port_name('COMx')
 print(port_device.hardware_ids)
 
 # Get the usb information of the device.
-usb_info = get_usb_info(port_device)
+usb_info = port_device.get_usb_info()
 
 # Display usb information.
 print(usb_info)
