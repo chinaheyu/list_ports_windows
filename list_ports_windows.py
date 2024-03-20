@@ -807,21 +807,20 @@ class PortDevice(DeviceInterface):
             raise ctypes.WinError(ctypes.GetLastError())
         CloseHandle(port_handle)
 
-    def get_usb_info(self, all_hub_devices=None, all_usb_host_controllers=None):
+    def get_usb_info(self, device_registry=None):
         # Enumerate and store the instance numbers of all connected usb hubs.
-        if all_hub_devices is None:
-            all_hub_devices = set(USBHubDevice.enumerate_device())
-        if all_usb_host_controllers is None:
-            all_usb_host_controllers = set(USBHostControllerDevice.enumerate_device())
+        if device_registry is None:
+            device_registry = DeviceRegistry()
 
         # Get parent hub device and usb device recursively.
+        # hub_device -> usb_device -> usb_interface_device -> port_device
         usb_device = self
         usb_interface_device = self
         while True:
             parent_device = usb_device.parent
             if parent_device is None:
                 return None
-            hub_device = find_from_iterable(all_hub_devices, parent_device)
+            hub_device = find_from_iterable(device_registry.all_usb_hubs, parent_device)
             if hub_device is not None:
                 break
             usb_interface_device = usb_device
@@ -830,7 +829,7 @@ class PortDevice(DeviceInterface):
         # Get usb host controller.
         parent_device = hub_device
         while parent_device is not None:
-            usb_host_controller_device = find_from_iterable(all_usb_host_controllers, parent_device)
+            usb_host_controller_device = find_from_iterable(device_registry.all_usb_host_controllers, parent_device)
             if usb_host_controller_device is not None:
                 break
             parent_device = parent_device.parent
@@ -941,37 +940,18 @@ class PortDevice(DeviceInterface):
         location = get_location_string(
             usb_device,
             usb_host_controller_device,
-            bConfigurationValue=bConfigurationValue,
-            bInterfaceNumber=bInterfaceNumber
+            bConfigurationValue,
+            bInterfaceNumber,
+            device_registry
         )
         return USBInfo(pid, vid, product, manufacturer, serial_number, location, function, interface)
 
 
 class USBHostControllerDevice(DeviceInterface):
     guid_list = [GUID_DEVINTERFACE_USB_HOST_CONTROLLER]
-    usb_bus_list = []
 
     def __init__(self, interface):
         super().__init__(interface)
-
-    @property
-    def bus_number(self):
-        if self not in self.usb_bus_list:
-            self.update_bus_list()
-        return self.usb_bus_list.index(self) + 1
-
-    @classmethod
-    def find_usb_host_controller(cls, bus_number):
-        bus_index = bus_number - 1
-        if bus_index >= len(cls.usb_bus_list):
-            cls.update_bus_list()
-        if bus_index < len(cls.usb_bus_list):
-            return cls.usb_bus_list[bus_index]
-        return None
-
-    @classmethod
-    def update_bus_list(cls):
-        cls.usb_bus_list = sorted(set(cls.enumerate_device()), key=lambda x: x.instance_identifier)
 
     def get_root_hub_name(self):
         hdev = CreateFileW(
@@ -1024,6 +1004,18 @@ class USBHubDevice(DeviceInterface):
 
     def __init__(self, interface):
         super().__init__(interface)
+
+
+class DeviceRegistry:
+    def __init__(self):
+        self.all_usb_hubs = sorted(set(USBHubDevice.enumerate_device()))
+        self.all_usb_host_controllers = sorted(set(USBHostControllerDevice.enumerate_device()))
+
+    def get_bus_number(self, usb_host_controller):
+        return self.all_usb_host_controllers.index(usb_host_controller) + 1
+
+    def get_usb_host_controller(self, bus_number):
+        return self.all_usb_host_controllers[bus_number - 1]
 
 
 class USBHubDeviceIO:
@@ -1378,13 +1370,15 @@ class USBInfo:
         return f'{self.location} - {self.vid:04X}:{self.pid:04X} - {self.product} - {self.manufacturer} - {self.serial_number} - {self.function} - {self.interface}'
 
 
-def get_location_string(usb_device, usb_host_controller_device, bConfigurationValue=None, bInterfaceNumber=None):
+def get_location_string(usb_device, usb_host_controller_device, bConfigurationValue=None, bInterfaceNumber=None, device_registry=None):
+    if device_registry is None:
+        device_registry = DeviceRegistry()
     location_paths = usb_device.location_paths
     if not location_paths:
         return None
     if (bConfigurationValue is None) and (bInterfaceNumber is not None):
         bConfigurationValue = 'x'
-    bus_number = usb_host_controller_device.bus_number
+    bus_number = device_registry.get_bus_number(usb_host_controller_device)
     location = [str(bus_number)]
     for g in re.finditer(r'#USB\((\w+)\)', location_paths[0]):
         if len(location) > 1:
@@ -1445,10 +1439,9 @@ def parse_location_string(location):
 
 
 def iterate_comports(retrieve_usb_info=False, unique=True):
-    # Enumerate and store the instance numbers of all connected usb hubs.
+    # Enumerate and store all connected usb hubs.
     if retrieve_usb_info:
-        all_hub_devices = set(USBHubDevice.enumerate_device())
-        all_usb_host_controllers = set(USBHostControllerDevice.enumerate_device())
+        device_registry = DeviceRegistry()
 
     # Generate non-repeating serial devices.
     if unique:
@@ -1463,7 +1456,7 @@ def iterate_comports(retrieve_usb_info=False, unique=True):
                 yielded_devices.append(port_device)
         # Request usb information.
         if retrieve_usb_info:
-            usb_info = port_device.get_usb_info(all_hub_devices, all_usb_host_controllers)
+            usb_info = port_device.get_usb_info(device_registry)
             # usb_info may be None because some serial ports are not usb interfaces (e.g. virtual serial ports).
             yield port_device, usb_info
         else:
