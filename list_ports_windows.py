@@ -3,6 +3,7 @@
 # Enumerate serial ports on Windows including a human-readable description and hardware information.
 
 import ctypes
+import winreg
 import re
 
 
@@ -1010,6 +1011,9 @@ class DeviceRegistry:
     def __init__(self):
         self.all_usb_hubs = sorted(set(USBHubDevice.enumerate_device()))
         self.all_usb_host_controllers = sorted(set(USBHostControllerDevice.enumerate_device()))
+        # TODO: Register notification for device changing
+        # https://learn.microsoft.com/windows/win32/api/cfgmgr32/nf-cfgmgr32-cm_register_notification
+        # https://docs.python.org/3/library/ctypes.html#callback-functions
 
     def get_bus_number(self, usb_host_controller):
         return self.all_usb_host_controllers.index(usb_host_controller) + 1
@@ -1394,12 +1398,14 @@ def get_location_string(usb_device, usb_host_controller_device, bConfigurationVa
     return ''.join(location)
 
 
-def parse_location_string(location):
+def parse_location_string(location, device_registry=None):
+    if device_registry is None:
+        device_registry = DeviceRegistry()
     # Parses the location string and returns human-readable node names.
     # http://www.linux-usb.org/FAQ.html#i6
     nodes = []
     bus_num, port_chain = location.split('-')
-    pci_device = USBHostControllerDevice.find_usb_host_controller(int(bus_num))
+    pci_device = device_registry.get_usb_host_controller(int(bus_num))
     if pci_device is None:
         return nodes
     m = re.match(r'PCI\\VEN_([0-9a-f]{4})&DEV_([0-9a-f]{4})&SUBSYS_[0-9a-f]{8}&REV_[0-9a-f]{2}', pci_device.instance_identifier, re.IGNORECASE)
@@ -1471,6 +1477,18 @@ def find_device_from_port_name(port_name):
     return None
 
 
+def get_all_port_name_from_registry(pdo=False):
+    all_port_name = []
+    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "HARDWARE\\DEVICEMAP\\SERIALCOMM", access=winreg.KEY_QUERY_VALUE)
+    for i in range(winreg.QueryInfoKey(key)[1]):
+        if pdo:
+            all_port_name.append(f'{winreg.EnumValue(key, i)[0]} ({winreg.EnumValue(key, i)[1]})')
+        else:
+            all_port_name.append(winreg.EnumValue(key, i)[1])
+    key.Close()
+    return all_port_name
+
+
 def pyserial_comports():
     # Generate pyserial-compatible ListPortInfo.
     from serial.tools.list_ports_common import ListPortInfo
@@ -1503,12 +1521,40 @@ def comports(include_links=False):
 
 
 def test():
+    print(' Available Ports from Registry '.center(80, '='))
+    print(', '.join(get_all_port_name_from_registry(pdo=True)))
+    print(' Port Information '.center(80, '='), end='')
     for port_device, usb_info in sorted(iterate_comports(retrieve_usb_info=True)):
+        port_device: PortDevice
+        print()
         print(f'[{port_device.port_name}]')
-        if usb_info is None:
-            print(f'Description: {port_device.description}')
-            print(f'Manufacturer: {port_device.manufacturer}')
-        else:
+        print(f'Friendly Name: {port_device.friendly_name}')
+        print(f'Description: {port_device.description}')
+        print(f'Bus Reported Device Description: {port_device.bus_reported_device_description}')
+
+        print(f'Instance Identifier: {port_device.instance_identifier}')
+        print(f'Hardware Identifier: {port_device.hardware_ids}')
+        print(f'Compatible Identifier: {port_device.compatible_ids}')
+
+        print(f'Class: {port_device.class_name}')
+        print(f'Class GUID: {port_device.class_guid}')
+
+        print(f'Physical Device Object Name: {port_device.physical_device_object_name}')
+        print(f'Manufacturer: {port_device.manufacturer}')
+        print(f'Driver: {port_device.driver}')
+        print(f'Driver Inf: {port_device.driver_inf_path}')
+
+        print(f'Location Info: {port_device.location_info}')
+        print(f'Location Paths: {port_device.location_paths}')
+        print(f'Address: {port_device.address}')
+        print(f'Bus Number: {port_device.bus_number}')
+
+        print(f'Service: {port_device.service}')
+        print(f'Enumerator Name: {port_device.enumerator_name}')
+
+        print(f'Power Data: {port_device.power_data.PD_MostRecentPowerState}')
+
+        if usb_info is not None:
             if usb_info.location is not None:
                 for depth, node in enumerate(parse_location_string(usb_info.location)):
                     if depth == 0:
@@ -1523,9 +1569,11 @@ def test():
             print(f'SerialNumber: {usb_info.serial_number}')
             print(f'Function: {usb_info.function}')
             print(f'Interface: {usb_info.interface}')
-        print()
-    print("If we've lost some serial ports or have incorrect information listed, please open an issue on github to let us know.")
+
+    print(' Feedback '.center(80, '='))
+    print("If we've lost some serial ports or have incorrect information listed, please\nopen an issue on github to let us know.")
     print('Link: https://github.com/chinaheyu/list_ports_windows/issues/new')
+    print('=' * 80)
 
 
 if __name__ == '__main__':
@@ -1534,6 +1582,7 @@ if __name__ == '__main__':
 
 __all__ = [
     'find_device_from_port_name',
+    'get_all_port_name_from_registry',
     'iterate_comports',
     'pyserial_comports',
     'comports',
