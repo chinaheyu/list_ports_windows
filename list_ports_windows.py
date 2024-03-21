@@ -1522,7 +1522,7 @@ def comports(include_links=False):
 
 def test():
     print(' Available Ports from Registry '.center(80, '='))
-    print(', '.join(get_all_port_name_from_registry(pdo=True)))
+    print('\n'.join(get_all_port_name_from_registry(pdo=True)))
     print(' Port Information '.center(80, '='), end='')
     for port_device, usb_info in sorted(iterate_comports(retrieve_usb_info=True)):
         port_device: PortDevice
