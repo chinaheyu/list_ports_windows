@@ -123,3 +123,17 @@ from serial.tools.list_ports_common import ListPortInfo
 for port in comports():
     print(isinstance(port, ListPortInfo))
 ```
+
+### Hot Plug (experimental)
+
+```python
+from list_ports_windows import PortHotPlugDetector
+
+def arrival_callback(port_name):
+    print(port_name)
+
+def removal_callback(port_name):
+    print(port_name)
+
+detector = PortHotPlugDetector(arrival_callback, removal_callback)
+```

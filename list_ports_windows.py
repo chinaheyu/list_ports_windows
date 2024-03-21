@@ -9,9 +9,9 @@ import re
 
 class GUID(ctypes.Structure):
     _fields_ = [
-        ('Data1', ctypes.c_ulong),
-        ('Data2', ctypes.c_ushort),
-        ('Data3', ctypes.c_ushort),
+        ('Data1', ctypes.c_uint32),
+        ('Data2', ctypes.c_uint16),
+        ('Data3', ctypes.c_uint16),
         ('Data4', ctypes.c_uint8 * 8),
     ]
 
@@ -24,11 +24,17 @@ class GUID(ctypes.Structure):
             ''.join(["{:02x}".format(d) for d in self.Data4[2:]]),
         )
 
+    def __eq__(self, other):
+        return self.Data1 == other.Data1 \
+            and self.Data2 == other.Data2 \
+            and self.Data3 == other.Data3 \
+            and all((self.Data4[i] == other.Data4[i] for i in range(8)))
+
 
 class DEVPROPKEY(ctypes.Structure):
     _fields_ = [
         ('fmtid', GUID),
-        ('pid', ctypes.c_ulong)
+        ('pid', ctypes.c_uint32)
     ]
 
 
@@ -115,13 +121,13 @@ class USB_INTERFACE_ASSOCIATION_DESCRIPTOR(ctypes.Structure):
 class USB_NODE_CONNECTION_INFORMATION_EX(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
-        ('ConnectionIndex', ctypes.c_ulong),
+        ('ConnectionIndex', ctypes.c_uint32),
         ('DeviceDescriptor', USB_DEVICE_DESCRIPTOR),
         ('CurrentConfigurationValue', ctypes.c_uint8),
         ('Speed', ctypes.c_uint8),
         ('DeviceIsHub', ctypes.c_uint8),
         ('DeviceAddress', ctypes.c_uint16),
-        ('NumberOfOpenPipes', ctypes.c_ulong),
+        ('NumberOfOpenPipes', ctypes.c_uint32),
         ('ConnectionStatus', ctypes.c_uint),
     ]
 
@@ -148,7 +154,7 @@ class USB_DESCRIPTOR_REQUEST(ctypes.Structure):
 class USB_ROOT_HUB_NAME(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
-        ('ActualLength', ctypes.c_ulong),
+        ('ActualLength', ctypes.c_uint32),
         ('RootHubName', ctypes.c_wchar),
     ]
 
@@ -156,59 +162,64 @@ class USB_ROOT_HUB_NAME(ctypes.Structure):
 class USB_NODE_CONNECTION_NAME(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
-        ('ConnectionIndex', ctypes.c_ulong),
-        ('ActualLength', ctypes.c_ulong),
+        ('ConnectionIndex', ctypes.c_uint32),
+        ('ActualLength', ctypes.c_uint32),
         ('NodeName', ctypes.c_wchar),
     ]
 
 
 class CM_POWER_DATA(ctypes.Structure):
     _fields_ = [
-        ('PD_Size', ctypes.c_ulong),
+        ('PD_Size', ctypes.c_uint32),
         ('PD_MostRecentPowerState', ctypes.c_int),
-        ('PD_Capabilities', ctypes.c_ulong),
-        ('PD_D1Latency', ctypes.c_ulong),
-        ('PD_D2Latency', ctypes.c_ulong),
-        ('PD_D3Latency', ctypes.c_ulong),
+        ('PD_Capabilities', ctypes.c_uint32),
+        ('PD_D1Latency', ctypes.c_uint32),
+        ('PD_D2Latency', ctypes.c_uint32),
+        ('PD_D3Latency', ctypes.c_uint32),
         ('PD_PowerStateMapping', ctypes.c_int * 7),
         ('PD_DeepestSystemWake', ctypes.c_int),
     ]
 
 
-class USBUSER_REQUEST_HEADER(ctypes.Structure):
+class CM_NOTIFY_FILTER_UNION(ctypes.Union):
     _fields_ = [
-        ('UsbUserRequest', ctypes.c_ulong),
-        ('UsbUserStatusCode', ctypes.c_int),
-        ('RequestBufferLength', ctypes.c_ulong),
-        ('ActualBufferLength', ctypes.c_ulong)
+        ('ClassGuid', GUID),
+        ('hTarget', ctypes.c_void_p),
+        ('InstanceId', ctypes.c_wchar * 200)
     ]
 
 
-class USB_CONTROLLER_INFO_0(ctypes.Structure):
+class CM_NOTIFY_FILTER(ctypes.Structure):
     _fields_ = [
-        ('PciVendorId', ctypes.c_ulong),
-        ('PciDeviceId', ctypes.c_ulong),
-        ('PciRevision', ctypes.c_ulong),
-        ('NumberOfRootPorts', ctypes.c_ulong),
-        ('ControllerFlavor', ctypes.c_int),
-        ('HcFeatureFlags', ctypes.c_ulong)
+        ('cbSize', ctypes.c_uint32),
+        ('Flags', ctypes.c_uint32),
+        ('FilterType', ctypes.c_int),
+        ('Reserved', ctypes.c_uint32),
+        ('u', CM_NOTIFY_FILTER_UNION)
+    ]
+
+
+class CM_NOTIFY_EVENT_DATA(ctypes.Structure):
+    _fields_ = [
+        ('FilterType', ctypes.c_int),
+        ('Reserved', ctypes.c_uint32)
     ]
 
 
 CreateFileW = ctypes.windll.kernel32.CreateFileW
 CreateFileW.argtypes = [
     ctypes.c_void_p,
-    ctypes.c_ulong,
-    ctypes.c_ulong,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
     ctypes.c_void_p,
-    ctypes.c_ulong,
-    ctypes.c_ulong,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
     ctypes.c_void_p
 ]
 CreateFileW.restype = ctypes.c_void_p
 
 GetUserDefaultLangID = ctypes.windll.kernel32.GetUserDefaultLangID
-GetUserDefaultLangID.restype = ctypes.c_ushort
+GetUserDefaultLangID.restype = ctypes.c_uint16
 
 CloseHandle = ctypes.windll.kernel32.CloseHandle
 CloseHandle.argtypes = [
@@ -219,12 +230,12 @@ CloseHandle.restype = ctypes.c_int
 DeviceIoControl = ctypes.windll.kernel32.DeviceIoControl
 DeviceIoControl.argtypes = [
     ctypes.c_void_p,
-    ctypes.c_ulong,
+    ctypes.c_uint32,
     ctypes.c_void_p,
-    ctypes.c_ulong,
+    ctypes.c_uint32,
     ctypes.c_void_p,
-    ctypes.c_ulong,
-    ctypes.POINTER(ctypes.c_ulong),
+    ctypes.c_uint32,
+    ctypes.POINTER(ctypes.c_uint32),
     ctypes.c_void_p
 ]
 DeviceIoControl.restype = ctypes.c_int
@@ -233,132 +244,156 @@ RegQueryValueExW = ctypes.windll.advapi32.RegQueryValueExW
 RegQueryValueExW.argtypes = [
     ctypes.c_void_p,
     ctypes.c_wchar_p,
-    ctypes.POINTER(ctypes.c_ulong),
-    ctypes.POINTER(ctypes.c_ulong),
+    ctypes.POINTER(ctypes.c_uint32),
+    ctypes.POINTER(ctypes.c_uint32),
     ctypes.c_void_p,
-    ctypes.POINTER(ctypes.c_ulong)
+    ctypes.POINTER(ctypes.c_uint32)
 ]
-RegQueryValueExW.restype = ctypes.c_long
+RegQueryValueExW.restype = ctypes.c_int32
 
 RegCloseKey = ctypes.windll.advapi32.RegCloseKey
 RegCloseKey.argtypes = [
     ctypes.c_void_p
 ]
-RegCloseKey.restype = ctypes.c_long
+RegCloseKey.restype = ctypes.c_int32
 
 CM_Get_Device_Interface_List_SizeW = ctypes.windll.cfgmgr32.CM_Get_Device_Interface_List_SizeW
 CM_Get_Device_Interface_List_SizeW.argtypes = [
-    ctypes.POINTER(ctypes.c_ulong),
+    ctypes.POINTER(ctypes.c_uint32),
     ctypes.POINTER(GUID),
     ctypes.c_wchar_p,
-    ctypes.c_ulong
+    ctypes.c_uint32
 ]
-CM_Get_Device_Interface_List_SizeW.restype = ctypes.c_ulong
+CM_Get_Device_Interface_List_SizeW.restype = ctypes.c_uint32
 
 CM_Get_Device_Interface_ListW = ctypes.windll.cfgmgr32.CM_Get_Device_Interface_ListW
 CM_Get_Device_Interface_ListW.argtypes = [
     ctypes.POINTER(GUID),
     ctypes.c_wchar_p,
     ctypes.c_wchar_p,
-    ctypes.c_ulong,
-    ctypes.c_ulong
+    ctypes.c_uint32,
+    ctypes.c_uint32
 ]
-CM_Get_Device_Interface_ListW.restype = ctypes.c_ulong
+CM_Get_Device_Interface_ListW.restype = ctypes.c_uint32
 
 CM_Locate_DevNodeW = ctypes.windll.cfgmgr32.CM_Locate_DevNodeW
 CM_Locate_DevNodeW.argtypes = [
-    ctypes.POINTER(ctypes.c_ulong),
+    ctypes.POINTER(ctypes.c_uint32),
     ctypes.c_wchar_p,
-    ctypes.c_ulong
+    ctypes.c_uint32
 ]
-CM_Locate_DevNodeW.restype = ctypes.c_ulong
+CM_Locate_DevNodeW.restype = ctypes.c_uint32
 
 CM_Get_DevNode_PropertyW = ctypes.windll.cfgmgr32.CM_Get_DevNode_PropertyW
 CM_Get_DevNode_PropertyW.argtypes = [
-    ctypes.c_ulong,
+    ctypes.c_uint32,
     ctypes.POINTER(DEVPROPKEY),
-    ctypes.POINTER(ctypes.c_ulong),
+    ctypes.POINTER(ctypes.c_uint32),
     ctypes.c_char_p,
-    ctypes.POINTER(ctypes.c_ulong),
-    ctypes.c_ulong
+    ctypes.POINTER(ctypes.c_uint32),
+    ctypes.c_uint32
 ]
-CM_Get_DevNode_PropertyW.restype = ctypes.c_ulong
+CM_Get_DevNode_PropertyW.restype = ctypes.c_uint32
 
 CM_MapCrToWin32Err = ctypes.windll.cfgmgr32.CM_MapCrToWin32Err
 CM_MapCrToWin32Err.argtypes = [
-    ctypes.c_ulong,
-    ctypes.c_ulong
+    ctypes.c_uint32,
+    ctypes.c_uint32
 ]
-CM_MapCrToWin32Err.restype = ctypes.c_ulong
+CM_MapCrToWin32Err.restype = ctypes.c_uint32
 
 CM_Get_Device_Interface_PropertyW = ctypes.windll.cfgmgr32.CM_Get_Device_Interface_PropertyW
 CM_Get_Device_Interface_PropertyW.argtypes = [
     ctypes.c_wchar_p,
     ctypes.POINTER(DEVPROPKEY),
-    ctypes.POINTER(ctypes.c_ulong),
+    ctypes.POINTER(ctypes.c_uint32),
     ctypes.c_char_p,
-    ctypes.POINTER(ctypes.c_ulong),
-    ctypes.c_ulong
+    ctypes.POINTER(ctypes.c_uint32),
+    ctypes.c_uint32
 ]
-CM_Get_Device_Interface_PropertyW.restype = ctypes.c_ulong
+CM_Get_Device_Interface_PropertyW.restype = ctypes.c_uint32
 
 CM_Get_DevNode_Status = ctypes.windll.cfgmgr32.CM_Get_DevNode_Status
 CM_Get_DevNode_Status.argtypes = [
-    ctypes.POINTER(ctypes.c_ulong),
-    ctypes.POINTER(ctypes.c_ulong),
-    ctypes.c_ulong,
-    ctypes.c_ulong
+    ctypes.POINTER(ctypes.c_uint32),
+    ctypes.POINTER(ctypes.c_uint32),
+    ctypes.c_uint32,
+    ctypes.c_uint32
 ]
-CM_Get_DevNode_Status.restype = ctypes.c_ulong
+CM_Get_DevNode_Status.restype = ctypes.c_uint32
 
 CM_Get_Parent = ctypes.windll.cfgmgr32.CM_Get_Parent
 CM_Get_Parent.argtypes = [
-    ctypes.POINTER(ctypes.c_ulong),
-    ctypes.c_ulong,
-    ctypes.c_ulong
+    ctypes.POINTER(ctypes.c_uint32),
+    ctypes.c_uint32,
+    ctypes.c_uint32
 ]
-CM_Get_Parent.restype = ctypes.c_ulong
+CM_Get_Parent.restype = ctypes.c_uint32
 
 CM_Get_Child = ctypes.windll.cfgmgr32.CM_Get_Child
 CM_Get_Child.argtypes = [
-    ctypes.POINTER(ctypes.c_ulong),
-    ctypes.c_ulong,
-    ctypes.c_ulong
+    ctypes.POINTER(ctypes.c_uint32),
+    ctypes.c_uint32,
+    ctypes.c_uint32
 ]
-CM_Get_Child.restype = ctypes.c_ulong
+CM_Get_Child.restype = ctypes.c_uint32
 
 CM_Get_Sibling = ctypes.windll.cfgmgr32.CM_Get_Sibling
 CM_Get_Sibling.argtypes = [
-    ctypes.POINTER(ctypes.c_ulong),
-    ctypes.c_ulong,
-    ctypes.c_ulong
+    ctypes.POINTER(ctypes.c_uint32),
+    ctypes.c_uint32,
+    ctypes.c_uint32
 ]
-CM_Get_Sibling.restype = ctypes.c_ulong
+CM_Get_Sibling.restype = ctypes.c_uint32
 
 CM_Open_DevNode_Key = ctypes.windll.cfgmgr32.CM_Open_DevNode_Key
 CM_Open_DevNode_Key.argtypes = [
-    ctypes.c_ulong,
-    ctypes.c_ulong,
-    ctypes.c_ulong,
-    ctypes.c_ulong,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
     ctypes.c_void_p,
-    ctypes.c_ulong
+    ctypes.c_uint32
 ]
-CM_Open_DevNode_Key.restype = ctypes.c_ulong
+CM_Open_DevNode_Key.restype = ctypes.c_uint32
 
 CM_Enable_DevNode = ctypes.windll.cfgmgr32.CM_Enable_DevNode
 CM_Enable_DevNode.argtypes = [
-    ctypes.c_ulong,
-    ctypes.c_ulong
+    ctypes.c_uint32,
+    ctypes.c_uint32
 ]
-CM_Enable_DevNode.restype = ctypes.c_ulong
+CM_Enable_DevNode.restype = ctypes.c_uint32
 
 CM_Disable_DevNode = ctypes.windll.cfgmgr32.CM_Disable_DevNode
 CM_Disable_DevNode.argtypes = [
-    ctypes.c_ulong,
-    ctypes.c_ulong
+    ctypes.c_uint32,
+    ctypes.c_uint32
 ]
-CM_Disable_DevNode.restype = ctypes.c_ulong
+CM_Disable_DevNode.restype = ctypes.c_uint32
+
+CM_NOTIFY_CALLBACK = ctypes.CFUNCTYPE(
+    ctypes.c_uint32,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.c_uint32
+)
+
+CM_Register_Notification = ctypes.windll.cfgmgr32.CM_Register_Notification
+CM_Register_Notification.argtypes = [
+    ctypes.POINTER(CM_NOTIFY_FILTER),
+    ctypes.c_void_p,
+    CM_NOTIFY_CALLBACK,
+    ctypes.POINTER(ctypes.c_void_p)
+]
+CM_Register_Notification.restype = ctypes.c_uint32
+
+CM_Unregister_Notification = ctypes.windll.cfgmgr32.CM_Unregister_Notification
+CM_Unregister_Notification.argtypes = [
+    ctypes.c_void_p
+]
+CM_Unregister_Notification.restype = ctypes.c_uint32
 
 GUID_DEVINTERFACE_USB_HUB = GUID(0xf18a0e88, 0xc30c, 0x11d0, (0x88, 0x15, 0x00, 0xa0, 0xc9, 0x06, 0xbe, 0xd8))
 GUID_DEVINTERFACE_COMPORT = GUID(0X86E0D1E0, 0X8089, 0X11D0, (0X9C, 0XE4, 0X08, 0X00, 0X3E, 0X30, 0X1F, 0X73))
@@ -367,6 +402,9 @@ GUID_DEVINTERFACE_USB_HOST_CONTROLLER = GUID(0x3abf6f2d, 0x71c4, 0x462a, (0x8a, 
 
 CM_GET_DEVICE_INTERFACE_LIST_PRESENT = 0
 CM_LOCATE_DEVNODE_NORMAL = 0
+CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE = 0
+CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL = 0
+CM_NOTIFY_ACTION_DEVICEINTERFACEREMOVAL = 1
 CR_SUCCESS = 0
 CR_BUFFER_SMALL = 26
 ERROR_MORE_DATA = 234
@@ -498,8 +536,8 @@ class DeviceNode:
 
     @property
     def status(self):
-        node_status = ctypes.c_ulong()
-        problem_number = ctypes.c_ulong()
+        node_status = ctypes.c_uint32()
+        problem_number = ctypes.c_uint32()
         cr = CM_Get_DevNode_Status(ctypes.byref(node_status), ctypes.byref(problem_number), self.__instance_handle, 0)
         if cr != CR_SUCCESS:
             return None
@@ -507,7 +545,7 @@ class DeviceNode:
 
     @cached_property
     def parent(self):
-        parent_instance_handle = ctypes.c_ulong()
+        parent_instance_handle = ctypes.c_uint32()
         cr = CM_Get_Parent(ctypes.byref(parent_instance_handle), self.__instance_handle, 0)
         if cr != CR_SUCCESS:
             return None
@@ -515,7 +553,7 @@ class DeviceNode:
 
     @cached_property
     def first_child(self):
-        child_instance_handle = ctypes.c_ulong()
+        child_instance_handle = ctypes.c_uint32()
         cr = CM_Get_Child(ctypes.byref(child_instance_handle), self.__instance_handle, 0)
         if cr != CR_SUCCESS:
             return None
@@ -523,7 +561,7 @@ class DeviceNode:
 
     @cached_property
     def sibling(self):
-        sibling_instance_handle = ctypes.c_ulong()
+        sibling_instance_handle = ctypes.c_uint32()
         cr = CM_Get_Sibling(ctypes.byref(sibling_instance_handle), self.__instance_handle, 0)
         if cr != CR_SUCCESS:
             return None
@@ -630,7 +668,7 @@ class DeviceNode:
         )
         if cr != CR_SUCCESS:
             return None
-        buffer_size = ctypes.c_ulong()
+        buffer_size = ctypes.c_uint32()
         status = RegQueryValueExW(
             hkey,
             "PortName",
@@ -656,8 +694,8 @@ class DeviceNode:
         return buffer.value
 
     def get_property(self, property_key):
-        buffer_size = ctypes.c_ulong()
-        property_type = ctypes.c_ulong()
+        buffer_size = ctypes.c_uint32()
+        property_type = ctypes.c_uint32()
         cr = CM_Get_DevNode_PropertyW(
             self.__instance_handle,
             ctypes.byref(property_key),
@@ -693,7 +731,7 @@ class DeviceInterface(DeviceNode):
     def enumerate_device(cls):
         # Repeat for all possible GUIDs.
         for guid in cls.guid_list:
-            device_interface_list_size = ctypes.c_ulong()
+            device_interface_list_size = ctypes.c_uint32()
             cr = CM_Get_Device_Interface_List_SizeW(
                 ctypes.byref(device_interface_list_size),
                 ctypes.byref(guid),
@@ -726,7 +764,7 @@ class DeviceInterface(DeviceNode):
 
     @cached_property
     def instance_handle(self):
-        instance_handle = ctypes.c_ulong()
+        instance_handle = ctypes.c_uint32()
         cr = CM_Locate_DevNodeW(
             ctypes.byref(instance_handle),
             self.instance_identifier,
@@ -737,8 +775,8 @@ class DeviceInterface(DeviceNode):
         return instance_handle.value
 
     def get_interface_property(self, property_key):
-        buffer_size = ctypes.c_ulong()
-        property_type = ctypes.c_ulong()
+        buffer_size = ctypes.c_uint32()
+        property_type = ctypes.c_uint32()
         cr = CM_Get_Device_Interface_PropertyW(
             self.__interface,
             ctypes.byref(property_key),
@@ -813,7 +851,7 @@ class PortDevice(DeviceInterface):
         if device_registry is None:
             device_registry = DeviceRegistry()
 
-        # Get parent hub device and usb device recursively.
+        # Get parent hub device, usb device and interface device recursively.
         # hub_device -> usb_device -> usb_interface_device -> port_device
         usb_device = self
         usb_interface_device = self
@@ -857,7 +895,7 @@ class PortDevice(DeviceInterface):
         # hub_path = "\\\\?\\Global\\GLOBALROOT" + hub_device.physical_device_object_name
         # Solution 3: Just using the interface string.
         hub_path = hub_device.interface
-        with USBHubDeviceIO(hub_path) as hub_io:
+        with USBHubDeviceIOControl(hub_path) as hub_io:
             if not hub_io.is_open:
                 return None
 
@@ -893,7 +931,7 @@ class PortDevice(DeviceInterface):
 
             # Get the bInterfaceNumber.
             bInterfaceNumber = None
-            location_paths = self.location_paths
+            location_paths = usb_interface_device.location_paths
             if location_paths is not None:
                 # Parse interface number from location paths.
                 for p in location_paths:
@@ -940,10 +978,9 @@ class PortDevice(DeviceInterface):
         # Generate location string compatible with linux usbfs.
         location = get_location_string(
             usb_device,
-            usb_host_controller_device,
+            device_registry.get_bus_number(usb_host_controller_device),
             bConfigurationValue,
-            bInterfaceNumber,
-            device_registry
+            bInterfaceNumber
         )
         return USBInfo(pid, vid, product, manufacturer, serial_number, location, function, interface)
 
@@ -1011,9 +1048,6 @@ class DeviceRegistry:
     def __init__(self):
         self.all_usb_hubs = sorted(set(USBHubDevice.enumerate_device()))
         self.all_usb_host_controllers = sorted(set(USBHostControllerDevice.enumerate_device()))
-        # TODO: Register notification for device changing
-        # https://learn.microsoft.com/windows/win32/api/cfgmgr32/nf-cfgmgr32-cm_register_notification
-        # https://docs.python.org/3/library/ctypes.html#callback-functions
 
     def get_bus_number(self, usb_host_controller):
         return self.all_usb_host_controllers.index(usb_host_controller) + 1
@@ -1022,7 +1056,7 @@ class DeviceRegistry:
         return self.all_usb_host_controllers[bus_number - 1]
 
 
-class USBHubDeviceIO:
+class USBHubDeviceIOControl:
     def __init__(self, device_path):
         self.device_path = device_path
         self.device_handle = INVALID_HANDLE_VALUE
@@ -1258,6 +1292,8 @@ class USBHubDeviceIO:
                 )
                 if common_description_offset + common_description.contents.bLength \
                         <= configuration_description.wTotalLength:
+
+                    # Interface association description for iFunction
                     if common_description.contents.bDescriptorType == USB_INTERFACE_ASSOCIATION_DESCRIPTOR_TYPE:
                         if common_description.contents.bLength == ctypes.sizeof(USB_INTERFACE_ASSOCIATION_DESCRIPTOR):
                             interface_association_description = ctypes.cast(
@@ -1279,6 +1315,7 @@ class USBHubDeviceIO:
                         else:
                             break
 
+                    # Interface description for iInterface
                     if common_description.contents.bDescriptorType == USB_INTERFACE_DESCRIPTOR_TYPE:
                         if common_description.contents.bLength == ctypes.sizeof(USB_INTERFACE_DESCRIPTOR):
                             interface_description = ctypes.cast(
@@ -1374,15 +1411,62 @@ class USBInfo:
         return f'{self.location} - {self.vid:04X}:{self.pid:04X} - {self.product} - {self.manufacturer} - {self.serial_number} - {self.function} - {self.interface}'
 
 
-def get_location_string(usb_device, usb_host_controller_device, bConfigurationValue=None, bInterfaceNumber=None, device_registry=None):
-    if device_registry is None:
-        device_registry = DeviceRegistry()
+class PortHotPlugDetector:
+    def __init__(self, arrival_callback=None, removal_callback=None):
+        self.arrival_callback = arrival_callback
+        self.removal_callback = removal_callback
+        self.notification_handles = []
+        for guid in PortDevice.guid_list:
+            notification_handle = ctypes.c_void_p(-1)
+            u = CM_NOTIFY_FILTER_UNION()
+            u.ClassGuid = guid
+            notification_filter = CM_NOTIFY_FILTER(
+                ctypes.sizeof(CM_NOTIFY_FILTER),
+                0,
+                CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE,
+                0,
+                u
+            )
+            if CM_Register_Notification(
+                ctypes.byref(notification_filter),
+                ctypes.c_void_p.from_buffer(ctypes.py_object(self)),
+                self.notification_callback,
+                ctypes.byref(notification_handle)
+            ) == CR_SUCCESS:
+                self.notification_handles.append(notification_handle)
+        self.port_mapping = {}
+        for port_device in iterate_comports():
+            self.port_mapping[port_device.interface] = port_device.port_name
+
+    def __del__(self):
+        for notification_handle in self.notification_handles:
+            CM_Unregister_Notification(notification_handle)
+
+    @staticmethod
+    @CM_NOTIFY_CALLBACK
+    def notification_callback(_h_notify, context, action, event_data, event_data_size):
+        interface_string_offset = ctypes.sizeof(CM_NOTIFY_EVENT_DATA) + ctypes.sizeof(GUID)
+        interface_string_size = event_data_size - interface_string_offset
+        interface_string = ctypes.wstring_at(event_data + interface_string_offset, interface_string_size // 2 - 1)
+        self = ctypes.cast(context, ctypes.py_object).value
+        if action == CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL:
+            if self.arrival_callback is not None:
+                self.port_mapping[interface_string] = PortDevice(interface_string).port_name
+                self.arrival_callback(self.port_mapping[interface_string])
+        if action == CM_NOTIFY_ACTION_DEVICEINTERFACEREMOVAL:
+            if self.removal_callback is not None:
+                if interface_string in self.port_mapping:
+                    self.removal_callback(self.port_mapping[interface_string])
+                    del self.port_mapping[interface_string]
+        return 0
+
+
+def get_location_string(usb_device, bus_number, bConfigurationValue=None, bInterfaceNumber=None):
     location_paths = usb_device.location_paths
     if not location_paths:
         return None
     if (bConfigurationValue is None) and (bInterfaceNumber is not None):
         bConfigurationValue = 'x'
-    bus_number = device_registry.get_bus_number(usb_host_controller_device)
     location = [str(bus_number)]
     for g in re.finditer(r'#USB\((\w+)\)', location_paths[0]):
         if len(location) > 1:
@@ -1429,7 +1513,7 @@ def parse_location_string(location, device_registry=None):
         port = int(port)
 
         # Open current hub device
-        with USBHubDeviceIO(hub_path) as hub_io:
+        with USBHubDeviceIOControl(hub_path) as hub_io:
             if not hub_io.is_open:
                 return None
 
@@ -1588,5 +1672,6 @@ __all__ = [
     'comports',
     'DeviceInterface',
     'USBInfo',
+    'PortHotPlugDetector',
     'parse_location_string'
 ]
