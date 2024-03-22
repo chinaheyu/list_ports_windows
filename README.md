@@ -124,7 +124,7 @@ for port in comports():
     print(isinstance(port, ListPortInfo))
 ```
 
-### Hot Plug (experimental)
+### Hot Plug Detection
 
 ```python
 from list_ports_windows import PortHotPlugDetector
@@ -136,4 +136,5 @@ def removal_callback(port_name):
     print(port_name)
 
 detector = PortHotPlugDetector(arrival_callback, removal_callback)
+detector.start()
 ```

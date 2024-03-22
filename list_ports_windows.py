@@ -1416,6 +1416,20 @@ class PortHotPlugDetector:
         self.arrival_callback = arrival_callback
         self.removal_callback = removal_callback
         self.notification_handles = []
+        self.port_mapping = {}
+        self.notification_callback_pointer = CM_NOTIFY_CALLBACK(self.notification_callback)
+
+    def __del__(self):
+        self.stop()
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+
+    def start(self):
         for guid in PortDevice.guid_list:
             notification_handle = ctypes.c_void_p(-1)
             u = CM_NOTIFY_FILTER_UNION()
@@ -1430,24 +1444,25 @@ class PortHotPlugDetector:
             if CM_Register_Notification(
                 ctypes.byref(notification_filter),
                 ctypes.c_void_p.from_buffer(ctypes.py_object(self)),
-                self.notification_callback,
+                self.notification_callback_pointer,
                 ctypes.byref(notification_handle)
             ) == CR_SUCCESS:
                 self.notification_handles.append(notification_handle)
-        self.port_mapping = {}
         for port_device in iterate_comports():
-            self.port_mapping[port_device.interface] = port_device.port_name
+            self.port_mapping[port_device.interface.casefold()] = port_device.port_name
 
-    def __del__(self):
+    def stop(self):
         for notification_handle in self.notification_handles:
             CM_Unregister_Notification(notification_handle)
+        self.notification_handles.clear()
+        self.port_mapping.clear()
 
     @staticmethod
-    @CM_NOTIFY_CALLBACK
     def notification_callback(_h_notify, context, action, event_data, event_data_size):
         interface_string_offset = ctypes.sizeof(CM_NOTIFY_EVENT_DATA) + ctypes.sizeof(GUID)
         interface_string_size = event_data_size - interface_string_offset
-        interface_string = ctypes.wstring_at(event_data + interface_string_offset, interface_string_size // 2 - 1)
+        interface_string = \
+            ctypes.wstring_at(event_data + interface_string_offset, interface_string_size // 2 - 1).casefold()
         self = ctypes.cast(context, ctypes.py_object).value
         if action == CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL:
             if self.arrival_callback is not None:
@@ -1458,6 +1473,8 @@ class PortHotPlugDetector:
                 if interface_string in self.port_mapping:
                     self.removal_callback(self.port_mapping[interface_string])
                     del self.port_mapping[interface_string]
+                else:
+                    print(interface_string)
         return 0
 
 
@@ -1616,6 +1633,7 @@ def test():
         print(f'Description: {port_device.description}')
         print(f'Bus Reported Device Description: {port_device.bus_reported_device_description}')
 
+        print(f'Interface: {port_device.interface}')
         print(f'Instance Identifier: {port_device.instance_identifier}')
         print(f'Hardware Identifier: {port_device.hardware_ids}')
         print(f'Compatible Identifier: {port_device.compatible_ids}')
@@ -1645,19 +1663,27 @@ def test():
                         print(node)
                     else:
                         print('    ' * (depth - 1) + '|__ ' + node)
-            print(f'Location: {usb_info.location}')
-            print(f'Vendor: {usb_info.vid:04X}')
-            print(f'Product: {usb_info.pid:04X}')
-            print(f'Manufacturer: {usb_info.manufacturer}')
-            print(f'Product: {usb_info.product}')
-            print(f'SerialNumber: {usb_info.serial_number}')
-            print(f'Function: {usb_info.function}')
-            print(f'Interface: {usb_info.interface}')
+            print(f'(USB) Location: {usb_info.location}')
+            print(f'(USB) Vendor: {usb_info.vid:04X}')
+            print(f'(USB) Product: {usb_info.pid:04X}')
+            print(f'(USB) Manufacturer: {usb_info.manufacturer}')
+            print(f'(USB) Product: {usb_info.product}')
+            print(f'(USB) SerialNumber: {usb_info.serial_number}')
+            print(f'(USB) Function: {usb_info.function}')
+            print(f'(USB) Interface: {usb_info.interface}')
 
     print(' Feedback '.center(80, '='))
     print("If we've lost some serial ports or have incorrect information listed, please\nopen an issue on github to let us know.")
     print('Link: https://github.com/chinaheyu/list_ports_windows/issues/new')
-    print('=' * 80)
+    print(' Hot Plug Test '.center(80, '='))
+
+    with PortHotPlugDetector(
+        lambda x: print(f'{x} is arrived.'),
+        lambda x: print(f'{x} is removed.'),
+    ):
+        print('Listening for hot-plug events. Press ENTER key to exit...')
+        print('=' * 80)
+        input()
 
 
 if __name__ == '__main__':
