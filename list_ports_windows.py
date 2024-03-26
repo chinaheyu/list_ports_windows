@@ -988,9 +988,6 @@ class PortDevice(DeviceInterface):
 class USBHostControllerDevice(DeviceInterface):
     guid_list = [GUID_DEVINTERFACE_USB_HOST_CONTROLLER]
 
-    def __init__(self, interface):
-        super().__init__(interface)
-
     def get_root_hub_name(self):
         hdev = CreateFileW(
             self.interface,
@@ -1039,9 +1036,6 @@ class USBHostControllerDevice(DeviceInterface):
 
 class USBHubDevice(DeviceInterface):
     guid_list = [GUID_DEVINTERFACE_USB_HUB]
-
-    def __init__(self, interface):
-        super().__init__(interface)
 
 
 class DeviceRegistry:
@@ -1119,16 +1113,17 @@ class USBHubDeviceIOControl:
         )
 
         # Check size again
-        string_size = returned_size.value - ctypes.sizeof(USB_DESCRIPTOR_REQUEST)
-        if string_size != description.contents.bLength:
+        string_descriptor_size = returned_size.value - ctypes.sizeof(USB_DESCRIPTOR_REQUEST)
+        if string_descriptor_size != description.contents.bLength:
             return None
 
         # Parse available language id
+        available_language_id_count = (string_descriptor_size - 2) // 2
         languages = []
-        for i in range(2, string_size, 2):
+        for i in range(available_language_id_count):
             languages.append(ctypes.c_uint16.from_buffer(
                 description_request_buffer,
-                ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + i
+                ctypes.sizeof(USB_DESCRIPTOR_REQUEST) + i * 2 + 2
             ).value)
         return languages
 
